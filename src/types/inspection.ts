@@ -1,6 +1,7 @@
-import type { BaseRecord, ISODate } from "./common";
+import type { BaseRecord, FileMeta, ISODate } from "./common";
 
-export type InspectionStatus = "not_inspected" | "scheduled" | "in_progress" | "passed" | "failed" | "reinspection_required";
+export type InspectionStatus = "not_inspected" | "scheduled" | "in_progress" | "passed" | "failed" | "conditional" | "reinspection_required";
+export type InspectionResult = "pass" | "fail" | "conditional";
 export type ChecklistValue = "pass" | "fail" | "na";
 
 export interface ChecklistItemDef {
@@ -13,20 +14,36 @@ export interface ChecklistCategoryDef {
   items: ChecklistItemDef[];
 }
 
+export interface InspectionDefect {
+  itemKey: string;
+  label: string;
+  severity: "minor" | "major" | "dangerous";
+  note?: string;
+}
+
 export interface Inspection extends BaseRecord {
+  /** INS-NCD-2026-000001 */
+  reference?: string;
   applicationId: string;
-  motorcycleId: string;
+  vehicleId: string;
   attempt: number;
   status: InspectionStatus;
   centerId?: string;
   inspectorId?: string;
   inspectionDate?: string;
+  location?: string;
+  odometerKm?: number;
   certificateNumber?: string;
   certificateDate?: string;
   certificateExpiry?: string;
+  /** Keys come from the vehicle-aware checklist (`inspectionChecklistFor`). */
   checklist: Record<string, ChecklistValue | undefined>;
-  result?: "pass" | "fail";
+  defects?: InspectionDefect[];
+  attachments?: FileMeta[];
+  result?: InspectionResult;
   failureReason?: string;
+  /** Conditions the owner must meet under a conditional approval. */
+  conditions?: string;
   notes?: string;
   submittedAt?: ISODate;
 }

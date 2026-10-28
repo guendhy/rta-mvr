@@ -9,17 +9,20 @@ import { useDemoUser } from "@/hooks/use-demo-user";
 import { useServiceQuery } from "@/hooks/use-service";
 import { friendlyError } from "@/lib/errors";
 import { Select } from "@/components/ui/form";
+import { plateCategoryFor, plateCategoryLabel } from "@/config/vehicle-usage";
 import { ConfirmDialog } from "@/components/ui/modal";
 import { Alert, EmptyState } from "@/components/ui/feedback";
 import { Section } from "@/components/ui/layout-bits";
 import type { RegistrationDetail } from "@/services/interfaces";
 
-/** Assign an available plate to an approved registration (spec §39). */
+/** Assign an available plate of the vehicle's series to an approved transaction. */
 export function PlateAssignInline({ detail }: { detail: RegistrationDetail }) {
   const { can } = useDemoUser();
   const app = detail.application;
   const [allOffices, setAllOffices] = useState(false);
-  const { data: plates, reload } = useServiceQuery(() => plateService.listAvailable(allOffices ? undefined : app.officeId), [allOffices, app.officeId]);
+  const v = detail.vehicle;
+  const category = app.type === "reclassification" ? plateCategoryFor(app.draft.classification?.vehicleType ?? v?.vehicleType, app.draft.classification?.vehicleUsage ?? v?.vehicleUsage) : v?.plateCategory;
+  const { data: plates, reload } = useServiceQuery(() => plateService.listAvailable(allOffices ? undefined : app.officeId, category), [allOffices, app.officeId, category]);
   const [plateId, setPlateId] = useState("");
   const [confirm, setConfirm] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -31,14 +34,14 @@ export function PlateAssignInline({ detail }: { detail: RegistrationDetail }) {
   }
 
   return (
-    <Section title="Assign number plate" description="Only available plates are listed. A plate can never be assigned twice.">
+    <Section title="Assign number plate" description={`Only available ${plateCategoryLabel(category)} plates are listed — the series matches the vehicle type and use. A plate can never be assigned twice.`}>
       {error && (
         <Alert tone="bad" title={error} action={<button type="button" className="btn btn-s btn-sm" onClick={() => { setError(null); setPlateId(""); reload(); }}>Pick another plate</button>}>
           Refresh the list and choose a different plate.
         </Alert>
       )}
       {plates && plates.length === 0 ? (
-        <EmptyState title="No Plates" message="No available motorcycle plates were found." action={!allOffices ? { label: "Show all offices", onClick: () => setAllOffices(true) } : { label: "Receive plates", href: "/plates" }} icon={<RectangleHorizontal size={36} />} />
+        <EmptyState title="No Plates" message={`No available ${plateCategoryLabel(category)} plates were found.`} action={!allOffices ? { label: "Show all offices", onClick: () => setAllOffices(true) } : { label: "Receive plates", href: "/plates" }} icon={<RectangleHorizontal size={36} />} />
       ) : (
         <div className="row items-end">
           <div className="min-w-[220px] flex-1">
@@ -56,12 +59,12 @@ export function PlateAssignInline({ detail }: { detail: RegistrationDetail }) {
         tone="success"
         title="Assign plate?"
         confirmLabel="Assign Plate"
-        message={<>Assign <strong className="mono">{plate?.plateNumber}</strong> to {app.registrationNumber}? The plate, motorcycle and registration are updated and the registration is completed.</>}
+        message={<>Assign <strong className="mono">{plate?.plateNumber}</strong> to {app.registrationNumber}? The plate, vehicle record and registration are updated and the transaction is completed.</>}
         onConfirm={async () => {
           setBusy(true);
           try {
             await plateService.assign(plateId, app.id);
-            toast.success(`Plate ${plate?.plateNumber} assigned`, { description: "Motorcycle registered successfully." });
+            toast.success(`Plate ${plate?.plateNumber} assigned`, { description: "Transaction completed." });
             setConfirm(false);
           } catch (e) {
             setError(friendlyError(e));

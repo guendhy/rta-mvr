@@ -28,7 +28,7 @@ function PlatesContent() {
 
   return (
     <div className="flex flex-col gap-6">
-      <PageHeader eyebrow="Plates" title={tab === "assign" ? "Plate Assignment" : "Plate Inventory"} description={tab === "assign" ? "Assign an available plate to each approved registration to complete it." : "Motorcycle number plate stock across RTA offices."} />
+      <PageHeader eyebrow="Plates" title={tab === "assign" ? "Plate Assignment" : "Plate Inventory"} description={tab === "assign" ? "Assign an available plate to each approved transaction. Only plates from the category that matches the vehicle's type and use are offered." : "Number plate stock by plate category across RTA offices."} />
       <Tabs<Tab>
         label="Plate sections"
         value={tab}

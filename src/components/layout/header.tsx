@@ -107,8 +107,8 @@ export function Header({ onMenu, posMode }: { onMenu: () => void; posMode?: bool
           <Image src="/brand/rta-logo.png" alt="RTA logo" width={42} height={42} priority className="h-9 w-9 sm:h-[42px] sm:w-[42px]" />
           <span className="flex min-w-0 flex-col gap-0.5">
             <span className="truncate text-[12px] font-extrabold tracking-[.08em] sm:text-[13px]"><span className="sm:hidden">RTA</span><span className="hidden sm:inline">ROAD TRAFFIC AUTHORITY</span></span>
-            <span className="hidden truncate text-[11.5px] font-medium text-[#c4c7d0] xl:block">Papua New Guinea · Motorcycle Registration &amp; Payment System</span>
-            <span className="hidden truncate text-[11px] text-[#c4c7d0] min-[400px]:block xl:hidden">{posMode ? "POS Mode" : "Motorcycle Registration"}</span>
+            <span className="hidden truncate text-[11.5px] font-medium text-[#c4c7d0] xl:block">Road Traffic Authority — Papua New Guinea · Motor Vehicle Registration &amp; Payment System</span>
+            <span className="hidden truncate text-[11px] text-[#c4c7d0] min-[400px]:block xl:hidden">{posMode ? "POS Mode" : "Motor Vehicle Registration"}</span>
           </span>
         </Link>
         {demo && <span className="hidden flex-none rounded-md border border-[#ffd21a] px-2 py-1 text-[10.5px] font-extrabold tracking-[.12em] text-[#ffd21a] sm:inline">DEMO MODE</span>}

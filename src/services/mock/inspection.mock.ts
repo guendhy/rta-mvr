@@ -1,14 +1,16 @@
-import { CHECKLIST_KEYS } from "@/lib/constants";
+import { checklistKeysFor } from "@/config/inspection-checklists";
+import { provinceCode } from "@/lib/constants";
 import { ServiceError } from "@/lib/errors";
 import { generators, uuid } from "@/lib/generators";
 import { mockDelay } from "@/lib/mock-delay";
 import type { InspectionQueueItem, InspectionService, InspectionSubmitInput } from "../interfaces";
 import type { Inspection, InspectionCenter, InspectionStatus } from "@/types";
 import { actor, audit, consumeError, findById, mustFind, notify, nowIso, read, requirePermission, simulateNetwork, upsert } from "./core";
-import { loadApp, saveApp, transition } from "./registration.mock";
+import { detailFor, loadApp, saveApp, transition } from "./registration.mock";
+import { insuranceSatisfied } from "@/lib/workflow";
 
 function queueStatus(appStatus: string, insp: Inspection | null): InspectionStatus {
-  if (appStatus === "inspection_failed") return "failed";
+  if (appStatus === "inspection_failed") return insp?.status === "reinspection_required" ? "reinspection_required" : "failed";
   if (appStatus === "for_inspection") {
     if (insp?.status === "in_progress") return "in_progress";
     if (insp?.status === "scheduled") return insp.attempt > 1 ? "reinspection_required" : "scheduled";
@@ -44,7 +46,7 @@ export class MockInspectionService implements InspectionService {
         return {
           application,
           owner: findById("owners", application.ownerId),
-          motorcycle: findById("motorcycles", application.motorcycleId),
+          vehicle: findById("vehicles", application.vehicleId),
           inspection,
           status: queueStatus(application.status, inspection),
         };
@@ -55,7 +57,7 @@ export class MockInspectionService implements InspectionService {
   private current(applicationId: string): Inspection | null {
     const app = loadApp(applicationId);
     const insp = findById("inspections", app.inspectionId);
-    if (insp && !["passed", "failed"].includes(insp.status)) return insp;
+    if (insp && !["passed", "failed", "conditional", "reinspection_required"].includes(insp.status)) return insp;
     return null;
   }
 
@@ -63,10 +65,12 @@ export class MockInspectionService implements InspectionService {
     const app = loadApp(applicationId);
     const attempts = read("inspections").filter((i) => i.applicationId === applicationId).length;
     const ts = nowIso();
+    const vehicle = findById("vehicles", app.vehicleId);
     const insp: Inspection = {
       id: uuid(),
+      reference: generators.inspectionReference(provinceCode(vehicle?.provinceOfOperation)),
       applicationId,
-      motorcycleId: app.motorcycleId!,
+      vehicleId: app.vehicleId!,
       attempt: attempts + 1,
       status,
       checklist: {},
@@ -110,7 +114,7 @@ export class MockInspectionService implements InspectionService {
   async saveProgress(inspectionId: string, changes: Partial<InspectionSubmitInput>): Promise<Inspection> {
     await mockDelay(150, 300);
     const insp = mustFind("inspections", inspectionId, "Inspection");
-    if (["passed", "failed"].includes(insp.status)) return insp;
+    if (["passed", "failed", "conditional", "reinspection_required"].includes(insp.status)) return insp;
     const { result: _r, ...rest } = changes;
     void _r;
     return upsert("inspections", { ...insp, ...rest, checklist: { ...insp.checklist, ...rest.checklist }, updatedAt: nowIso() });
@@ -124,21 +128,25 @@ export class MockInspectionService implements InspectionService {
     const insp = mustFind("inspections", inspectionId, "Inspection");
     const app = loadApp(insp.applicationId);
     if (app.status !== "for_inspection") throw new ServiceError("workflow", "This application is not waiting for inspection.");
-    const missing = CHECKLIST_KEYS.filter((k) => !input.checklist[k]);
-    if (missing.length) throw new ServiceError("validation", `Complete all ${CHECKLIST_KEYS.length} checklist items (${missing.length} remaining).`);
-    const anyFail = CHECKLIST_KEYS.some((k) => input.checklist[k] === "fail");
-    if (input.result === "pass" && anyFail) throw new ServiceError("validation", "A motorcycle with failed checklist items cannot pass. Select FAIL or correct the checklist.");
+    const vehicle = findById("vehicles", app.vehicleId);
+    if (!vehicle) throw new ServiceError("validation", "Inspection record missing — the application has no vehicle.");
+    const keys = checklistKeysFor(vehicle.vehicleType);
+    const missing = keys.filter((k) => !input.checklist[k]);
+    if (missing.length) throw new ServiceError("validation", `Complete all ${keys.length} checklist items (${missing.length} remaining).`);
+    const anyFail = keys.some((k) => input.checklist[k] === "fail");
+    if (input.result === "pass" && anyFail) throw new ServiceError("validation", "A vehicle with failed checklist items cannot pass. Select Failed, Conditional Approval or correct the checklist.");
     if (input.result === "fail" && (!input.failureReason || !input.notes?.trim())) throw new ServiceError("validation", "Failure reason and notes are required when the inspection fails.");
+    if (input.result === "conditional" && !input.conditions?.trim()) throw new ServiceError("validation", "Record the conditions and repair due date for a conditional approval.");
 
     const ts = nowIso();
-    const passed = input.result === "pass";
+    const passed = input.result === "pass" || input.result === "conditional";
     const certDate = input.inspectionDate;
     const expiry = new Date(certDate);
     expiry.setMonth(expiry.getMonth() + 3);
     const next: Inspection = {
       ...insp,
       ...input,
-      status: passed ? "passed" : "failed",
+      status: input.result === "conditional" ? "conditional" : passed ? "passed" : "failed",
       certificateNumber: passed ? generators.inspectionCertificateNumber() : undefined,
       certificateDate: passed ? certDate : undefined,
       certificateExpiry: passed ? expiry.toISOString().slice(0, 10) : undefined,
@@ -149,16 +157,17 @@ export class MockInspectionService implements InspectionService {
 
     const settings = read("settings");
     if (passed) {
-      const doc = app.documents.find((d) => d.type === "roadworthiness_certificate");
+      const doc = app.documents.find((d) => d.type === "inspection_certificate");
       if (doc) Object.assign(doc, { status: "verified", file: { name: `${next.certificateNumber}.pdf`, size: 98_000, type: "application/pdf", uploadedAt: ts }, verifiedBy: "Inspection module", verifiedAt: ts, note: "Generated from inspection" });
-      transition(app, settings.registration.requireInsuranceVerification ? "for_insurance_verification" : "for_assessment", `Roadworthy — ${next.certificateNumber}`);
+      const insuranceDone = insuranceSatisfied(app, detailFor(app).insurance, settings);
+      transition(app, insuranceDone ? "for_assessment" : "for_insurance_verification", `${input.result === "conditional" ? "Conditional approval" : "Roadworthy"} — ${next.certificateNumber}`);
     } else {
       transition(app, "inspection_failed", input.failureReason);
       notify("Inspection Failed", `${app.transactionNumber} failed inspection: ${input.failureReason}.`, "danger", `/inspections/${app.id}`);
     }
     app.inspectionId = next.id;
     saveApp(app);
-    audit("inspection_submitted", "Inspection", passed ? `Inspection PASSED — ${next.certificateNumber}` : `Inspection FAILED — ${input.failureReason}`, { id: app.id, label: app.transactionNumber });
+    audit("inspection_submitted", "Inspection", input.result === "conditional" ? `Inspection CONDITIONAL — ${next.certificateNumber}` : passed ? `Inspection PASSED — ${next.certificateNumber}` : `Inspection FAILED — ${input.failureReason}`, { id: app.id, label: app.transactionNumber });
     return next;
   }
 
@@ -167,6 +176,8 @@ export class MockInspectionService implements InspectionService {
     await mockDelay();
     const app = loadApp(applicationId);
     if (app.status !== "inspection_failed") throw new ServiceError("workflow", "Reinspection is only available after a failed inspection.");
+    const failed = findById("inspections", app.inspectionId);
+    if (failed?.status === "failed") upsert("inspections", { ...failed, status: "reinspection_required", updatedAt: nowIso() });
     transition(app, "for_inspection", "Reinspection requested");
     saveApp(app);
     this.newInspection(applicationId, "scheduled", { inspectionDate: nowIso().slice(0, 10) });

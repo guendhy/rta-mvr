@@ -1,4 +1,4 @@
-import { REQUIRED_DOCUMENTS } from "./constants";
+import { LAST_CAPTURE_STEP } from "./constants";
 import type {
   AppSettings,
   Inspection,
@@ -75,31 +75,42 @@ export function isClosed(status: RegistrationStatus): boolean {
   return ["registered", "rejected", "cancelled"].includes(status);
 }
 
-/** Wizard step (1–8) that matches where the application currently sits. */
+/** Wizard step (1–10) that matches where the application currently sits. */
 export function stepForStatus(app: RegistrationApplication): number {
   switch (app.status) {
     case "draft":
     case "pending":
     case "returned":
-      return Math.min(Math.max(app.currentStep || 1, 1), 3);
+      return Math.min(Math.max(app.currentStep || 2, 2), LAST_CAPTURE_STEP);
     case "for_inspection":
     case "inspection_failed":
-      return 4;
     case "for_insurance_verification":
-      return 5;
-    case "for_assessment":
       return 6;
-    case "payment_required":
+    case "for_assessment":
       return 7;
-    default:
+    case "payment_required":
       return 8;
+    default:
+      return 10;
   }
 }
 
 /** Highest wizard step the officer may open for this application. */
 export function maxReachableStep(app: RegistrationApplication): number {
-  if (isEditable(app)) return Math.max(3, Math.min(app.currentStep || 1, 3));
-  return Math.max(stepForStatus(app), 3);
+  if (isEditable(app)) return LAST_CAPTURE_STEP;
+  if (app.status === "payment_required") return 9;
+  return Math.max(stepForStatus(app), LAST_CAPTURE_STEP);
+}
+
+/** Inspection passed (a conditional approval also allows registration). */
+export function inspectionSatisfied(app: Pick<RegistrationApplication, "inspectionRequired">, inspection: Inspection | null | undefined, settings: AppSettings): boolean {
+  if (!settings.registration.requireInspection || !app.inspectionRequired) return true;
+  return inspection?.result === "pass" || inspection?.result === "conditional";
+}
+
+export function insuranceSatisfied(app: Pick<RegistrationApplication, "insuranceRequired">, insurance: InsuranceRecord | null | undefined, settings: AppSettings): boolean {
+  if (!settings.registration.requireInsuranceVerification || !app.insuranceRequired) return true;
+  return insurance?.status === "verified";
 }
 
 /** Where an application goes after it is (re)submitted from pending. */
@@ -107,8 +118,8 @@ export function nextAfterSubmission(
   app: RegistrationApplication,
   ctx: { inspection?: Inspection | null; insurance?: InsuranceRecord | null; payment?: Payment | null; settings: AppSettings },
 ): RegistrationStatus {
-  const inspectionOk = !ctx.settings.registration.requireInspection || ctx.inspection?.result === "pass";
-  const insuranceOk = !ctx.settings.registration.requireInsuranceVerification || ctx.insurance?.status === "verified";
+  const inspectionOk = inspectionSatisfied(app, ctx.inspection, ctx.settings);
+  const insuranceOk = insuranceSatisfied(app, ctx.insurance, ctx.settings);
   if (inspectionOk && insuranceOk && ctx.payment?.status === "successful" && ctx.payment.applicationId === app.id) return "for_approval";
   if (inspectionOk && insuranceOk) return "for_assessment";
   if (inspectionOk) return "for_insurance_verification";
@@ -122,9 +133,9 @@ export interface ChecklistItem {
   detail: string;
 }
 
-export function documentsChecklist(app: RegistrationApplication) {
-  const required = app.type === "new" ? REQUIRED_DOCUMENTS : [];
-  const docs = app.documents.filter((d) => required.includes(d.type));
+export function documentsChecklist(app: Pick<RegistrationApplication, "documents">) {
+  const required = app.documents.filter((d) => d.required).map((d) => d.type);
+  const docs = app.documents.filter((d) => d.required);
   const present = required.every((t) => docs.some((d) => d.type === t && (d.status === "uploaded" || d.status === "verified")));
   const verified = required.every((t) => docs.some((d) => d.type === t && d.status === "verified"));
   const missing = required.filter((t) => !docs.some((d) => d.type === t && (d.status === "uploaded" || d.status === "verified")));
@@ -134,24 +145,28 @@ export function documentsChecklist(app: RegistrationApplication) {
 /** Pre-payment checklist (spec §25). */
 export function assessmentChecklist(
   app: RegistrationApplication,
-  ctx: { ownerComplete: boolean; motorcycleComplete: boolean; inspection?: Inspection | null; insurance?: InsuranceRecord | null; settings: AppSettings },
+  ctx: { ownerComplete: boolean; vehicleComplete: boolean; inspection?: Inspection | null; insurance?: InsuranceRecord | null; settings: AppSettings },
 ): ChecklistItem[] {
   const docs = documentsChecklist(app);
+  const inspOk = inspectionSatisfied(app, ctx.inspection, ctx.settings);
+  const insOk = insuranceSatisfied(app, ctx.insurance, ctx.settings);
+  const inspNotNeeded = !ctx.settings.registration.requireInspection || !app.inspectionRequired;
+  const insNotNeeded = !ctx.settings.registration.requireInsuranceVerification || !app.insuranceRequired;
   return [
-    { key: "owner", label: "Owner complete", ok: ctx.ownerComplete, detail: ctx.ownerComplete ? "Owner record linked" : "Owner details incomplete" },
-    { key: "motorcycle", label: "Motorcycle complete", ok: ctx.motorcycleComplete, detail: ctx.motorcycleComplete ? "Motorcycle record linked" : "Motorcycle details incomplete" },
+    { key: "owner", label: "Registered owner complete", ok: ctx.ownerComplete, detail: ctx.ownerComplete ? "Owner record linked" : "Owner details incomplete" },
+    { key: "vehicle", label: "Vehicle details complete", ok: ctx.vehicleComplete, detail: ctx.vehicleComplete ? "Vehicle record linked" : "Vehicle details incomplete" },
     { key: "documents", label: "Required documents present", ok: docs.present, detail: docs.present ? "All required documents uploaded" : `${docs.missing.length} required document(s) missing` },
     {
       key: "inspection",
       label: "Inspection passed",
-      ok: !ctx.settings.registration.requireInspection || ctx.inspection?.result === "pass",
-      detail: !ctx.settings.registration.requireInspection ? "Not required by settings" : ctx.inspection?.result === "pass" ? `Certificate ${ctx.inspection.certificateNumber}` : "Roadworthiness inspection not passed",
+      ok: inspOk,
+      detail: inspNotNeeded ? "Not required for this transaction" : inspOk ? `Certificate ${ctx.inspection?.certificateNumber ?? ctx.inspection?.reference ?? ""}` : "Vehicle inspection not passed",
     },
     {
       key: "insurance",
       label: "Insurance verified",
-      ok: !ctx.settings.registration.requireInsuranceVerification || ctx.insurance?.status === "verified",
-      detail: !ctx.settings.registration.requireInsuranceVerification ? "Not required by settings" : ctx.insurance?.status === "verified" ? `Policy ${ctx.insurance.policyNumber}` : `Insurance ${ctx.insurance?.status ?? "not captured"}`,
+      ok: insOk,
+      detail: insNotNeeded ? "Not required for this transaction" : insOk ? `Policy ${ctx.insurance?.policyNumber}` : `Insurance ${ctx.insurance?.status ?? "not captured"}`,
     },
     { key: "assessment", label: "Assessment generated", ok: !!app.assessment, detail: app.assessment ? `Total K ${app.assessment.total.toFixed(2)}` : "Generate the fee assessment" },
   ];
@@ -163,28 +178,41 @@ export function approvalChecklist(
   ctx: { inspection?: Inspection | null; insurance?: InsuranceRecord | null; payment?: Payment | null; settings: AppSettings },
 ): ChecklistItem[] {
   const docs = documentsChecklist(app);
-  const paidOk = ctx.payment?.status === "successful";
-  const assessmentOk = !!app.assessment && (!paidOk || Math.abs((ctx.payment?.amount ?? 0) - app.assessment.total) < 0.005);
+  const nothingDue = !!app.assessment && app.assessment.total === 0;
+  const paidOk = ctx.payment?.status === "successful" || nothingDue;
+  const assessmentOk = !!app.assessment && (nothingDue || ctx.payment?.status !== "successful" || Math.abs((ctx.payment?.amount ?? 0) - app.assessment.total) < 0.005);
+  const inspOk = inspectionSatisfied(app, ctx.inspection, ctx.settings);
+  const insOk = insuranceSatisfied(app, ctx.insurance, ctx.settings);
   return [
     {
       key: "inspection",
       label: "Inspection = Passed",
-      ok: !ctx.settings.registration.requireInspection || ctx.inspection?.result === "pass",
-      detail: ctx.inspection?.result === "pass" ? `Passed · ${ctx.inspection.certificateNumber}` : !ctx.settings.registration.requireInspection ? "Not required by settings" : "Inspection has not passed",
+      ok: inspOk,
+      detail: !ctx.settings.registration.requireInspection || !app.inspectionRequired ? "Not required for this transaction" : inspOk ? `${ctx.inspection?.result === "conditional" ? "Conditional approval" : "Passed"} · ${ctx.inspection?.certificateNumber ?? ctx.inspection?.reference ?? ""}` : "Inspection has not passed",
     },
     {
       key: "insurance",
       label: "Insurance = Verified",
-      ok: !ctx.settings.registration.requireInsuranceVerification || ctx.insurance?.status === "verified",
-      detail: ctx.insurance?.status === "verified" ? `Verified · ${ctx.insurance.policyNumber}` : !ctx.settings.registration.requireInsuranceVerification ? "Not required by settings" : `Insurance is ${ctx.insurance?.status ?? "missing"}`,
+      ok: insOk,
+      detail: !ctx.settings.registration.requireInsuranceVerification || !app.insuranceRequired ? "Not required for this transaction" : insOk ? `Verified · ${ctx.insurance?.policyNumber}` : `Insurance is ${ctx.insurance?.status ?? "missing"}`,
     },
-    { key: "payment", label: "Payment = Successful", ok: paidOk, detail: paidOk ? `${ctx.payment?.receiptNumber}` : "No successful payment recorded" },
+    { key: "payment", label: "Payment = Successful", ok: paidOk, detail: nothingDue ? "No amount due" : paidOk ? `${ctx.payment?.receiptNumber}` : "No successful payment recorded" },
     {
       key: "documents",
       label: "Required Documents = Verified",
       ok: docs.verified,
-      detail: app.type === "renewal" ? "Not required for renewal" : docs.verified ? "All required documents verified" : "Verify every required document",
+      detail: docs.required.length === 0 ? "No documents required" : docs.verified ? "All required documents verified" : "Verify every required document",
     },
     { key: "assessment", label: "Assessment = Valid", ok: assessmentOk, detail: assessmentOk ? `K ${app.assessment?.total.toFixed(2)}` : app.assessment ? "Paid amount does not match the assessment" : "Assessment missing" },
   ];
+}
+
+/** Summary payment state of an application for tables (see APPLICATION_PAYMENT_STATUS). */
+export function paymentStateOf(app: Pick<RegistrationApplication, "id" | "status" | "assessment" | "paymentId">, payments: Pick<Payment, "applicationId" | "status" | "createdAt">[]): "not_due" | "unpaid" | "paid" | "failed" {
+  const mine = payments.filter((p) => p.applicationId === app.id).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  if (mine.some((p) => p.status === "successful")) return "paid";
+  if (!app.assessment || app.assessment.total === 0) return "not_due";
+  if (["paid", "for_approval", "approved", "registered"].includes(app.status)) return "paid";
+  if (mine[0] && ["declined", "failed", "timeout", "unknown", "cancelled"].includes(mine[0].status)) return "failed";
+  return "unpaid";
 }

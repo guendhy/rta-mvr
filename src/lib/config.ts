@@ -5,7 +5,7 @@ export const appConfig = {
   enableDemoTools: true,
   enableOfflineSimulation: true,
   enableLocalPersistence: true,
-  version: "1.0.0-demo",
+  version: "2.0.0-demo",
 };
 
 export const isDevelopment = process.env.NODE_ENV === "development";

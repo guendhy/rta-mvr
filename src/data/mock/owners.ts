@@ -1,4 +1,4 @@
-import type { Gender, IdentificationType, Owner } from "@/types";
+import type { Gender, IdentificationType, Owner, OwnershipType } from "@/types";
 
 /** Fictional Papua New Guinea owners. Any resemblance to real people is coincidental. */
 type OwnerSeed = [
@@ -32,8 +32,9 @@ const OWNERS: OwnerSeed[] = [
 
 const id = (n: number) => `0a1b2c3d-4e5f-4a6b-8c7d-${String(n).padStart(12, "0")}`;
 
-export const SEED_OWNERS: Owner[] = OWNERS.map((o, i) => ({
+const INDIVIDUALS: Owner[] = OWNERS.map((o, i) => ({
   id: id(i + 1),
+  ownershipType: "individual",
   firstName: o[0],
   middleName: o[1] || undefined,
   lastName: o[2],
@@ -53,3 +54,48 @@ export const SEED_OWNERS: Owner[] = OWNERS.map((o, i) => ({
   createdAt: "2025-01-01T00:00:00.000Z",
   updatedAt: "2025-01-01T00:00:00.000Z",
 }));
+
+/** Fictional organisations — names are illustrative only. */
+type OrgSeed = [
+  type: OwnershipType, org: string, orgNumber: string, repFirst: string, repLast: string, position: string,
+  idNumber: string, mobile: string, businessPhone: string, province: string, district: string, street: string, postal: string,
+];
+
+const ORGS: OrgSeed[] = [
+  ["company", "Hagen Transport Ltd", "1-62044", "Mathew", "Pupu", "Fleet Manager", "DL-WHP-0512290", "+675 7234 5501", "+675 542 1180", "Western Highlands", "Hagen Central", "Section 9, Lot 4, Kagamuga", "PO Box 922, Mount Hagen"],
+  ["company", "Lae Haulage Ltd", "1-84211", "Steven", "Ipi", "Operations Director", "DL-MOR-0390018", "+675 7345 6602", "+675 472 3390", "Morobe", "Lae", "Malahang Industrial Estate, Lot 31", "PO Box 4410, Lae"],
+  ["company", "Kokopo Taxis Ltd", "1-77310", "Jacinta", "ToVue", "Managing Director", "NID-1988-221904", "+675 7456 7703", "+675 982 8811", "East New Britain", "Kokopo", "Williams Road, Section 2", "PO Box 312, Kokopo"],
+  ["government", "Department of Works & Highways", "GOV-DOWH", "Alphonse", "Siune", "Transport Officer", "PSID-0145520", "+675 7567 8804", "+675 300 2200", "National Capital District", "Moresby North-East", "Works Haus, Waigani Drive", "PO Box 1108, Boroko"],
+  ["diplomatic", "Example Diplomatic Mission", "DFA-ACC-0042", "Claire", "Morgan", "Administration Officer", "P-XXX-5521098", "+675 7678 9905", "+675 325 9900", "National Capital District", "Moresby South", "Lot 12, Section 51, Ela Beach Road", "PO Box 129, Port Moresby"],
+  ["company", "Wahgi Valley Growers Co-operative", "5-11872", "Noah", "Kaupa", "Secretary", "DL-JIW-0218845", "+675 7789 0106", "+675 546 2201", "Jiwaka", "North Wahgi", "Banz Highway, Lot 77", "PO Box 61, Banz"],
+  ["government", "NCD Provincial Health Authority", "GOV-NCDPHA", "Lydia", "Kalai", "Fleet Coordinator", "PSID-0201178", "+675 7890 1207", "+675 324 8000", "National Capital District", "Moresby North-West", "Port Moresby General Hospital Grounds", "PO Box 1291, Boroko"],
+  ["company", "Moresby Car Rentals Ltd", "1-90015", "Brian", "Waim", "General Manager", "DL-POM-0711462", "+675 7901 2308", "+675 325 4455", "National Capital District", "Moresby North-East", "Jacksons Parade, Unit 3", "PO Box 7731, Boroko"],
+  ["other_entity", "Gulf Christian Health Services", "ASSOC-2291", "Ezekiel", "Morea", "Health Services Manager", "NID-1979-551023", "+675 7012 3409", "+675 648 1022", "Gulf", "Kerema", "Mission Station, Kerema", "PO Box 18, Kerema"],
+];
+
+const ORGANIZATIONS: Owner[] = ORGS.map((o, i) => ({
+  id: id(OWNERS.length + i + 1),
+  ownershipType: o[0],
+  organizationName: o[1],
+  organizationRegistrationNumber: o[2],
+  firstName: o[3],
+  lastName: o[4],
+  authorizedRepresentative: `${o[3]} ${o[4]}`,
+  representativePosition: o[5],
+  nationality: o[0] === "diplomatic" ? "Foreign national" : "Papua New Guinean",
+  identificationType: o[6].startsWith("DL") ? "drivers_licence" : o[6].startsWith("P-") ? "passport" : o[6].startsWith("PSID") ? "other_government_id" : "national_id",
+  identificationNumber: o[6],
+  mobile: o[7],
+  businessPhone: o[8],
+  email: `fleet@${o[1].toLowerCase().replace(/[^a-z]+/g, "")}.example.com`,
+  province: o[9],
+  district: o[10],
+  llg: `${o[10]} Urban LLG`,
+  street: o[11],
+  postalAddress: o[12],
+  createdAt: "2025-01-01T00:00:00.000Z",
+  updatedAt: "2025-01-01T00:00:00.000Z",
+}));
+
+/** Owners 0–19 are individuals, 20–28 organisations (see ORGS). */
+export const SEED_OWNERS: Owner[] = [...INDIVIDUALS, ...ORGANIZATIONS];

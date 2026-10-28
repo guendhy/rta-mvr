@@ -1,6 +1,7 @@
 import type { BaseRecord, ISODate } from "./common";
 
-export type PaymentMethod = "pos" | "cash" | "online" | "bank_transfer";
+/** Payment channels. Availability is configured in `src/config/payment-channels.ts` + settings. */
+export type PaymentMethod = "pos" | "card" | "qr" | "cash" | "online" | "bank_transfer";
 export type PaymentStatus = "processing" | "successful" | "declined" | "timeout" | "unknown" | "failed" | "cancelled";
 
 export interface Payment extends BaseRecord {
@@ -34,12 +35,15 @@ export interface ReceiptData {
   transactionNumber: string;
   registrationNumber?: string;
   owner: string;
-  motorcycle: string;
+  vehicle: string;
+  vehicleType: string;
+  transactionType: string;
+  plateNumber?: string;
   vinOrChassis: string;
   engineNumber: string;
   paymentMethod: string;
   amount: number;
-  lines: { name: string; amount: number }[];
+  lines: { name: string; amount: number; sample?: boolean }[];
   paymentReference: string;
   terminalId?: string;
   approvalCode?: string;

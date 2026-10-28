@@ -3,128 +3,227 @@
 import { Suspense, useMemo, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Search, X } from "lucide-react";
+import { Download, Plus, RefreshCw, Search, X } from "lucide-react";
+import { useDemoUser } from "@/hooks/use-demo-user";
 import { useServiceQuery } from "@/hooks/use-service";
 import { useDebouncedValue } from "@/hooks/use-local-storage";
-import { MAKES, MOTORCYCLE_STATUS, PROVINCE_NAMES } from "@/lib/constants";
-import { formatDate, fullName } from "@/lib/formatting";
-import { motorcycleService } from "@/services/motorcycle.service";
-import { ownerService } from "@/services/owner.service";
-import { settingsService } from "@/services/settings.service";
+import { PROVINCE_NAMES } from "@/lib/constants";
+import { downloadText, formatDate, fullName, toCsv } from "@/lib/formatting";
+import { APPLICATION_PAYMENT_STATUS, VEHICLE_STATE_OPTIONS, getStatusLabel, vehicleRegistrationState, type ApplicationPaymentState, type VehicleRegistrationState } from "@/config/statuses";
+import { TRANSACTION_TYPE_OPTIONS, transactionLabel } from "@/config/transaction-types";
+import { VEHICLE_TYPE_OPTIONS, vehicleTypeLabel } from "@/config/vehicle-types";
+import { VEHICLE_USAGES, vehicleUsageLabel } from "@/config/vehicle-usage";
+import { vehicleService } from "@/services/vehicle.service";
+import { paymentService } from "@/services/payment.service";
+import type { VehicleRecord } from "@/services/interfaces";
 import { PageHeader } from "@/components/ui/layout-bits";
 import { Field, Input, Select } from "@/components/ui/form";
 import { ErrorState, PageSkeleton } from "@/components/ui/feedback";
-import { StatusBadge } from "@/components/ui/status-badge";
+import { RegistrationStatusBadge, StatusBadge } from "@/components/ui/status-badge";
 import { DataTable, MobileCard, type ColumnDef } from "@/components/ui/data-table";
-import { PlateChip, daysToExpiry, expiryText } from "@/components/registry/renewal";
-import type { Motorcycle, MotorcycleRegistrationStatus, Owner } from "@/types";
+import { VehicleIcon } from "@/components/vehicles/vehicle-icon";
+import {
+  EXPIRY_PERIOD_OPTIONS,
+  PlateChip,
+  applicationHref,
+  applicationPaymentState,
+  daysToExpiry,
+  expiryText,
+  matchesExpiryPeriod,
+  parseExpiryPeriod,
+  type ExpiryPeriod,
+} from "@/components/registry/renewal";
+import { recordMatches } from "@/components/registry/lookup";
 
-type Expiry = "" | "expired" | "30" | "90";
-type Row = { moto: Motorcycle; owner: Owner | undefined; days: number | null; officeName: string };
+type Row = VehicleRecord & { state: VehicleRegistrationState; days: number | null; payment: ApplicationPaymentState | null };
 
-const EXPIRY_OPTIONS = [
-  { value: "expired", label: "Expired" },
-  { value: "30", label: "Expiring in 30 days or less" },
-  { value: "90", label: "Expiring in 90 days or less" },
-];
+const STATE_VALUES = new Set<string>(VEHICLE_STATE_OPTIONS.map((o) => o.value));
+const RENEWABLE: VehicleRegistrationState[] = ["active", "expiring_soon", "expired"];
+const PAYMENT_OPTIONS = (Object.keys(APPLICATION_PAYMENT_STATUS) as ApplicationPaymentState[]).map((k) => ({ value: k, label: APPLICATION_PAYMENT_STATUS[k].label }));
 
 function ExpiryCell({ days, iso }: { days: number | null; iso?: string }) {
   if (days === null) return <span className="mut">—</span>;
   const tone = days < 0 ? "text-[#a3111a]" : days <= 30 ? "text-[#6e5200]" : "mut";
   return (
     <span className="flex flex-col">
-      <span className="mono">{formatDate(iso)}</span>
-      <span className={`text-[12px] ${tone}`}>{expiryText(days)}</span>
+      <span className="mono whitespace-nowrap">{formatDate(iso)}</span>
+      <span className={`text-[12px] whitespace-nowrap ${tone}`}>{expiryText(days)}</span>
     </span>
   );
 }
 
-function RegistryInner() {
-  const params = useSearchParams();
-  const initialExpiry = params.get("expiry");
-  const [query, setQuery] = useState(params.get("q") ?? "");
-  const [status, setStatus] = useState<string>(params.get("status") ?? "");
+interface Initial {
+  q: string;
+  status: string;
+  expiry: ExpiryPeriod;
+}
+
+function RegistryInner({ initial }: { initial: Initial }) {
+  const { can } = useDemoUser();
+  const [query, setQuery] = useState(initial.q);
+  const [type, setType] = useState("");
+  const [usage, setUsage] = useState("");
   const [province, setProvince] = useState("");
-  const [make, setMake] = useState("");
-  const [expiry, setExpiry] = useState<Expiry>(initialExpiry === "expired" || initialExpiry === "30" || initialExpiry === "90" ? initialExpiry : "");
-  const [office, setOffice] = useState("");
-  const q = useDebouncedValue(query.trim().toLowerCase(), 250);
+  const [status, setStatus] = useState(initial.status);
+  const [payment, setPayment] = useState("");
+  const [txn, setTxn] = useState("");
+  const [expiry, setExpiry] = useState<ExpiryPeriod>(initial.expiry);
+  const q = useDebouncedValue(query.trim(), 250);
 
   const data = useServiceQuery(async () => {
-    const [motos, owners, offices] = await Promise.all([motorcycleService.list(), ownerService.list(), settingsService.listOffices()]);
-    return { motos, owners, offices };
+    const [records, payments] = await Promise.all([vehicleService.listRecords(), paymentService.list().catch(() => [])]);
+    return { records, payments };
   }, []);
 
-  const rows = useMemo<Row[] | undefined>(() => {
+  const all = useMemo<Row[] | undefined>(() => {
     if (!data.data) return undefined;
-    const { motos, owners, offices } = data.data;
-    return motos
-      .map((m) => ({ moto: m, owner: owners.find((o) => o.id === m.ownerId), days: daysToExpiry(m), officeName: offices.find((o) => o.id === m.officeId)?.name ?? "—" }))
-      .filter((r) => {
-        const m = r.moto;
-        if (status && m.registrationStatus !== status) return false;
-        if (province && m.provinceOfOperation !== province) return false;
-        if (make && m.make !== make) return false;
-        if (office && m.officeId !== office) return false;
-        if (expiry === "expired" && !(r.days !== null && r.days < 0)) return false;
-        if ((expiry === "30" || expiry === "90") && !(r.days !== null && r.days >= 0 && r.days <= Number(expiry))) return false;
-        if (q) {
-          const hay = [m.registrationNumber, m.plateNumber, fullName(r.owner), r.owner?.mobile, m.engineNumber, m.chassisNumber, m.vin].filter(Boolean).join(" ").toLowerCase();
-          if (!hay.includes(q)) return false;
-        }
-        return true;
-      })
-      .sort((a, b) => (a.moto.plateNumber ?? "~").localeCompare(b.moto.plateNumber ?? "~"));
-  }, [data.data, status, province, make, office, expiry, q]);
+    const now = Date.now();
+    return data.data.records
+      .map((r) => ({
+        ...r,
+        state: vehicleRegistrationState(r.vehicle, now),
+        days: daysToExpiry(r.vehicle),
+        payment: r.openApplication ? applicationPaymentState(r.openApplication, data.data!.payments) : null,
+      }))
+      .sort((a, b) => (a.vehicle.registrationNumber ?? "~").localeCompare(b.vehicle.registrationNumber ?? "~"));
+  }, [data.data]);
+
+  const rows = useMemo(() => all?.filter((r) => {
+    const v = r.vehicle;
+    if (type && v.vehicleType !== type) return false;
+    if (usage && v.vehicleUsage !== usage) return false;
+    if (province && v.provinceOfOperation !== province) return false;
+    if (status && r.state !== status) return false;
+    if (payment && r.payment !== payment) return false;
+    if (txn && r.openApplication?.type !== txn) return false;
+    if (!matchesExpiryPeriod(r.days, expiry)) return false;
+    if (q && !recordMatches(r, q)) return false;
+    return true;
+  }), [all, type, usage, province, status, payment, txn, expiry, q]);
 
   if (data.error) return <ErrorState message={data.error} onRetry={() => data.reload()} />;
-  if (!data.data) return <PageSkeleton />;
+  if (!all) return <PageSkeleton />;
 
-  const filtersOn = !!(query || status || province || make || expiry || office);
-  const clear = () => { setQuery(""); setStatus(""); setProvince(""); setMake(""); setExpiry(""); setOffice(""); };
+  const filtersOn = !!(query || type || usage || province || status || payment || txn || expiry);
+  const clear = () => { setQuery(""); setType(""); setUsage(""); setProvince(""); setStatus(""); setPayment(""); setTxn(""); setExpiry(""); };
+  const canRenew = can("renewal.create");
+
+  const exportCsv = () => {
+    const cols = [
+      { key: "registrationNumber", label: "Registration Number" },
+      { key: "plateNumber", label: "Plate Number" },
+      { key: "vehicleType", label: "Vehicle Type" },
+      { key: "makeModel", label: "Make / Model" },
+      { key: "owner", label: "Registered Owner" },
+      { key: "vin", label: "VIN / Chassis" },
+      { key: "usage", label: "Vehicle Usage" },
+      { key: "registered", label: "Registration Date" },
+      { key: "expires", label: "Expiration Date" },
+      { key: "status", label: "Registration Status" },
+      { key: "payment", label: "Payment Status" },
+    ];
+    const out = (rows ?? []).map((r) => ({
+      registrationNumber: r.vehicle.registrationNumber ?? "",
+      plateNumber: r.vehicle.plateNumber ?? "",
+      vehicleType: vehicleTypeLabel(r.vehicle.vehicleType),
+      makeModel: `${r.vehicle.make} ${r.vehicle.model}`,
+      owner: fullName(r.owner),
+      vin: r.vehicle.vin || r.vehicle.chassisNumber,
+      usage: vehicleUsageLabel(r.vehicle.vehicleUsage),
+      registered: formatDate(r.vehicle.registrationDate),
+      expires: formatDate(r.vehicle.registrationExpiry),
+      status: getStatusLabel("vehicle", r.state),
+      payment: r.payment ? getStatusLabel("application-payment", r.payment) : "",
+    }));
+    downloadText(`motor-vehicle-registry-${new Date().toISOString().slice(0, 10)}.csv`, toCsv(cols, out));
+  };
+
+  const actions = (r: Row) => {
+    const v = r.vehicle;
+    const label = v.plateNumber ?? v.registrationNumber ?? v.vin;
+    return (
+      <div className="flex flex-wrap justify-end gap-1.5">
+        <Link href={`/registry/${v.id}`} className="btn btn-s btn-sm" aria-label={`View vehicle record ${label}`}>View</Link>
+        {r.openApplication?.type === "renewal" ? (
+          <Link href={applicationHref(r.openApplication)} className="btn btn-g btn-sm" aria-label={`Continue renewal ${r.openApplication.transactionNumber}`}>Continue</Link>
+        ) : canRenew && RENEWABLE.includes(r.state) && !r.openApplication ? (
+          <Link href={`/renewals?vehicle=${v.id}`} className="btn btn-g btn-sm" aria-label={`Renew registration ${label}`}><RefreshCw size={14} aria-hidden="true" />Renew</Link>
+        ) : null}
+      </div>
+    );
+  };
 
   const columns: ColumnDef<Row, unknown>[] = [
-    { id: "plate", header: "Plate", accessorFn: (r) => r.moto.plateNumber ?? "", cell: ({ row }) => <PlateChip plate={row.original.moto.plateNumber} size="sm" /> },
-    { id: "reg", header: "Registration No.", accessorFn: (r) => r.moto.registrationNumber ?? "", cell: ({ row }) => <span className="mono">{row.original.moto.registrationNumber ?? "—"}</span> },
-    { id: "owner", header: "Owner", accessorFn: (r) => fullName(r.owner) },
-    { id: "makeModel", header: "Make / Model", accessorFn: (r) => `${r.moto.make} ${r.moto.model}` },
-    { id: "year", header: "Year", accessorFn: (r) => r.moto.year, meta: { align: "right" } },
-    { id: "province", header: "Province", accessorFn: (r) => r.moto.provinceOfOperation },
-    { id: "expiry", header: "Expiry", accessorFn: (r) => r.moto.registrationExpiry ?? "", cell: ({ row }) => <ExpiryCell days={row.original.days} iso={row.original.moto.registrationExpiry} /> },
-    { id: "status", header: "Status", accessorFn: (r) => r.moto.registrationStatus, cell: ({ row }) => <StatusBadge kind="motorcycle" status={row.original.moto.registrationStatus} /> },
-    { id: "action", header: "Action", enableSorting: false, cell: ({ row }) => <Link href={`/registry/${row.original.moto.id}`} className="btn btn-s btn-sm" aria-label={`View motorcycle ${row.original.moto.plateNumber ?? row.original.moto.engineNumber}`}>View</Link> },
+    { id: "reg", header: "Registration Number", accessorFn: (r) => r.vehicle.registrationNumber ?? "", cell: ({ row }) => <Link href={`/registry/${row.original.vehicle.id}`} className="mono font-semibold whitespace-nowrap">{row.original.vehicle.registrationNumber ?? "Unregistered"}</Link> },
+    { id: "plate", header: "Plate Number", accessorFn: (r) => r.vehicle.plateNumber ?? "", cell: ({ row }) => <PlateChip plate={row.original.vehicle.plateNumber} size="sm" /> },
+    { id: "type", header: "Vehicle Type", accessorFn: (r) => vehicleTypeLabel(r.vehicle.vehicleType), cell: ({ row }) => <span className="inline-flex items-center gap-1.5 whitespace-nowrap"><VehicleIcon type={row.original.vehicle.vehicleType} size={16} />{vehicleTypeLabel(row.original.vehicle.vehicleType)}</span> },
+    { id: "makeModel", header: "Make / Model", accessorFn: (r) => `${r.vehicle.make} ${r.vehicle.model}`, cell: ({ row }) => <span className="font-semibold">{row.original.vehicle.make} {row.original.vehicle.model}<span className="mut block text-[12px] font-normal">{row.original.vehicle.year} · {row.original.vehicle.color}</span></span> },
+    { id: "owner", header: "Registered Owner", accessorFn: (r) => fullName(r.owner) },
+    { id: "vin", header: "VIN / Chassis", accessorFn: (r) => r.vehicle.vin || r.vehicle.chassisNumber, cell: ({ row }) => <span className="mono mut text-[12px]">{row.original.vehicle.vin || row.original.vehicle.chassisNumber}</span> },
+    { id: "usage", header: "Vehicle Usage", accessorFn: (r) => vehicleUsageLabel(r.vehicle.vehicleUsage) },
+    { id: "registered", header: "Registration Date", accessorFn: (r) => r.vehicle.registrationDate ?? "", cell: ({ row }) => <span className="mono whitespace-nowrap">{formatDate(row.original.vehicle.registrationDate)}</span> },
+    { id: "expiry", header: "Expiration Date", accessorFn: (r) => r.vehicle.registrationExpiry ?? "", cell: ({ row }) => <ExpiryCell days={row.original.days} iso={row.original.vehicle.registrationExpiry} /> },
+    { id: "status", header: "Registration Status", accessorFn: (r) => r.state, cell: ({ row }) => <RegistrationStatusBadge vehicle={row.original.vehicle} /> },
+    {
+      id: "payment",
+      header: "Payment Status",
+      accessorFn: (r) => r.payment ?? "",
+      cell: ({ row }) => row.original.payment && row.original.openApplication ? (
+        <span className="flex flex-col items-start gap-0.5">
+          <StatusBadge kind="application-payment" status={row.original.payment} />
+          <span className="mut text-[11.5px] whitespace-nowrap">{transactionLabel(row.original.openApplication.type, true)}</span>
+        </span>
+      ) : <span className="mut"><span aria-hidden="true">—</span><span className="sr">No open transaction</span></span>,
+    },
+    { id: "actions", header: "Actions", enableSorting: false, meta: { align: "right" }, cell: ({ row }) => actions(row.original) },
   ];
 
   return (
     <div className="flex flex-col gap-6">
-      <PageHeader eyebrow="Registry" title="Motorcycle Registry" description="Every motorcycle on record — registered, expired, suspended and not yet registered." />
+      <PageHeader
+        eyebrow="Registry"
+        title="Motor Vehicle Registry"
+        description={`${all.length.toLocaleString("en-US")} vehicles on record · every vehicle type · all RTA offices`}
+        actions={
+          <>
+            <button type="button" className="btn btn-s" onClick={exportCsv} disabled={!rows?.length}><Download size={16} aria-hidden="true" />Export CSV</button>
+            {can("registration.create") && <Link href="/registrations/new" className="btn btn-p"><Plus size={16} aria-hidden="true" />New Vehicle Transaction</Link>}
+          </>
+        }
+      />
 
       <section className="card sec" aria-label="Search and filters">
         <div className="form">
-          <Field label="Search" htmlFor="reg-q" className="full" help="Registration number, plate, owner name, engine number, chassis number or VIN">
+          <Field label="Search" htmlFor="reg-q" className="full" help="Registration number, plate, VIN, chassis number, engine number, owner name or phone">
             <div className="relative">
               <Search size={18} className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-[#5a606c]" aria-hidden="true" />
-              <Input id="reg-q" type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="e.g. NCD-2025-00012, P1234, Kila" className="!pl-10" autoComplete="off" />
+              <Input id="reg-q" type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="e.g. REG-NCD-25-011207, BFK 207, Mary Tau" className="!pl-10" autoComplete="off" />
             </div>
           </Field>
-          <Field label="Status" htmlFor="reg-status">
-            <Select id="reg-status" value={status} onChange={(e) => setStatus(e.target.value)} placeholder="All statuses" options={(Object.keys(MOTORCYCLE_STATUS) as MotorcycleRegistrationStatus[]).map((k) => ({ value: k, label: MOTORCYCLE_STATUS[k].label }))} />
+          <Field label="Vehicle type" htmlFor="reg-type">
+            <Select id="reg-type" value={type} onChange={(e) => setType(e.target.value)} placeholder="All vehicle types" options={VEHICLE_TYPE_OPTIONS} />
+          </Field>
+          <Field label="Vehicle usage" htmlFor="reg-usage">
+            <Select id="reg-usage" value={usage} onChange={(e) => setUsage(e.target.value)} placeholder="All uses" options={VEHICLE_USAGES.map((u) => ({ value: u.value, label: u.label }))} />
           </Field>
           <Field label="Province" htmlFor="reg-prov">
             <Select id="reg-prov" value={province} onChange={(e) => setProvince(e.target.value)} placeholder="All provinces" options={PROVINCE_NAMES} />
           </Field>
-          <Field label="Make" htmlFor="reg-make">
-            <Select id="reg-make" value={make} onChange={(e) => setMake(e.target.value)} placeholder="All makes" options={Object.keys(MAKES)} />
+          <Field label="Registration status" htmlFor="reg-status">
+            <Select id="reg-status" value={status} onChange={(e) => setStatus(e.target.value)} placeholder="All statuses" options={VEHICLE_STATE_OPTIONS} />
           </Field>
-          <Field label="Registration expiry" htmlFor="reg-exp">
-            <Select id="reg-exp" value={expiry} onChange={(e) => setExpiry(e.target.value as Expiry)} placeholder="Any expiry" options={EXPIRY_OPTIONS} />
+          <Field label="Payment status" htmlFor="reg-pay">
+            <Select id="reg-pay" value={payment} onChange={(e) => setPayment(e.target.value)} placeholder="Any payment status" options={PAYMENT_OPTIONS} />
           </Field>
-          <Field label="Office" htmlFor="reg-office">
-            <Select id="reg-office" value={office} onChange={(e) => setOffice(e.target.value)} placeholder="All offices" options={data.data.offices.map((o) => ({ value: o.id, label: o.name }))} />
+          <Field label="Transaction type" htmlFor="reg-txn" help="Of the open transaction">
+            <Select id="reg-txn" value={txn} onChange={(e) => setTxn(e.target.value)} placeholder="Any transaction" options={TRANSACTION_TYPE_OPTIONS} />
+          </Field>
+          <Field label="Expiration period" htmlFor="reg-exp">
+            <Select id="reg-exp" value={expiry} onChange={(e) => setExpiry(parseExpiryPeriod(e.target.value))} placeholder="Any time" options={EXPIRY_PERIOD_OPTIONS} />
           </Field>
         </div>
         <div className="row justify-between">
-          <p className="mut m-0 text-[13px]" aria-live="polite">{rows?.length ?? 0} of {data.data.motos.length} motorcycles</p>
+          <p className="mut m-0 text-[13px]" aria-live="polite">{rows?.length ?? 0} of {all.length} vehicles</p>
           {filtersOn && <button type="button" className="btn btn-g btn-sm min-h-[44px]" onClick={clear}><X size={16} aria-hidden="true" />Clear filters</button>}
         </div>
       </section>
@@ -136,23 +235,43 @@ function RegistryInner() {
         columns={columns}
         mobileCard={(r) => (
           <MobileCard
-            href={`/registry/${r.moto.id}`}
-            title={r.moto.registrationNumber ?? "Not registered"}
-            badge={<StatusBadge kind="motorcycle" status={r.moto.registrationStatus} />}
-            lines={[fullName(r.owner), `${r.moto.make} ${r.moto.model} · ${r.moto.year} · ${r.moto.provinceOfOperation}`]}
-            footer={<><PlateChip plate={r.moto.plateNumber} size="sm" /><span className="mut text-right text-[12px]">{r.days === null ? "No expiry" : `${formatDate(r.moto.registrationExpiry)} · ${expiryText(r.days)}`}</span></>}
+            href={`/registry/${r.vehicle.id}`}
+            title={r.vehicle.registrationNumber ?? "Unregistered"}
+            badge={<RegistrationStatusBadge vehicle={r.vehicle} />}
+            lines={[
+              <span key="v" className="inline-flex items-center gap-1.5"><VehicleIcon type={r.vehicle.vehicleType} size={18} />{r.vehicle.make} {r.vehicle.model} · {vehicleTypeLabel(r.vehicle.vehicleType)}</span>,
+              `${fullName(r.owner)} · ${vehicleUsageLabel(r.vehicle.vehicleUsage)}`,
+              r.payment ? <span key="p" className="inline-flex items-center gap-1.5">Payment <StatusBadge kind="application-payment" status={r.payment} /></span> : `VIN ${r.vehicle.vin || r.vehicle.chassisNumber}`,
+            ]}
+            footer={<><PlateChip plate={r.vehicle.plateNumber} size="sm" /><span className="mut text-right text-[12px]">{r.days === null ? "No expiry" : `${formatDate(r.vehicle.registrationExpiry)} · ${expiryText(r.days)}`}</span></>}
           />
         )}
-        empty={{ title: "No motorcycles found", message: filtersOn ? "No motorcycles match the current search and filters." : "There are no motorcycles on record yet.", action: filtersOn ? { label: "Clear filters", onClick: clear } : undefined }}
+        empty={{
+          title: "No registrations found",
+          message: filtersOn ? "No vehicles match the current search and filters." : "There are no vehicles on the registry yet.",
+          action: filtersOn ? { label: "Clear filters", onClick: clear } : undefined,
+        }}
       />
     </div>
   );
 }
 
+function RegistryRoute() {
+  const params = useSearchParams();
+  const rawStatus = params.get("status") ?? "";
+  const initial: Initial = {
+    q: params.get("q") ?? "",
+    status: STATE_VALUES.has(rawStatus) ? rawStatus : "",
+    expiry: parseExpiryPeriod(params.get("expiry")),
+  };
+  // Remount when the sidebar changes the query so the filters follow the link.
+  return <RegistryInner key={params.toString()} initial={initial} />;
+}
+
 export default function RegistryPage() {
   return (
     <Suspense fallback={<PageSkeleton />}>
-      <RegistryInner />
+      <RegistryRoute />
     </Suspense>
   );
 }

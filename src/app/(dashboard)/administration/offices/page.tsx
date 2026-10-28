@@ -5,6 +5,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Pencil, Plus } from "lucide-react";
+import { useDemoUser } from "@/hooks/use-demo-user";
 import { useAction, useServiceQuery } from "@/hooks/use-service";
 import { PROVINCE_NAMES, districtsFor } from "@/lib/constants";
 import { settingsService } from "@/services/settings.service";
@@ -15,6 +16,7 @@ import { Modal } from "@/components/ui/modal";
 import { DataTable, MobileCard, type ColumnDef } from "@/components/ui/data-table";
 import { ErrorState } from "@/components/ui/feedback";
 import { ActiveBadge, FilterBar, FilterSelect, FormFooter, ResultCount, SearchField } from "@/components/admin/admin-bits";
+import { LocationsNav } from "@/components/admin/locations-nav";
 
 const schema = z.object({
   name: z.string().trim().min(3, "Enter the office name"),
@@ -61,6 +63,8 @@ function OfficeForm({ office, onDone }: { office: Office | null; onDone: () => v
 }
 
 export default function OfficesPage() {
+  const { can } = useDemoUser();
+  const canEdit = can("offices.manage");
   const offices = useServiceQuery(() => settingsService.listOffices(), []);
   const [q, setQ] = useState("");
   const [province, setProvince] = useState("");
@@ -81,12 +85,13 @@ export default function OfficesPage() {
     { id: "phone", header: "Phone", accessorFn: (o) => o.phone, cell: ({ row }) => <span className="whitespace-nowrap">{row.original.phone}</span> },
     { id: "email", header: "Email", accessorFn: (o) => o.email },
     { id: "status", header: "Status", accessorFn: (o) => o.status, cell: ({ row }) => <ActiveBadge active={row.original.status === "active"} /> },
-    { id: "actions", header: "Actions", enableSorting: false, cell: ({ row }) => <button type="button" className="btn btn-s btn-sm" onClick={() => setEditing(row.original)} aria-label={`Edit ${row.original.name}`}><Pencil size={14} aria-hidden="true" />Edit</button> },
+    ...(canEdit ? [{ id: "actions", header: "Actions", enableSorting: false, cell: ({ row }) => <button type="button" className="btn btn-s btn-sm" onClick={() => setEditing(row.original)} aria-label={`Edit ${row.original.name}`}><Pencil size={14} aria-hidden="true" />Edit</button> } satisfies ColumnDef<Office, unknown>] : []),
   ];
 
   return (
     <div className="flex flex-col gap-6">
-      <PageHeader eyebrow="Administration" title="Offices" description="RTA registration offices. Users, plates and POS terminals are assigned to an office." actions={<button type="button" className="btn btn-p" onClick={() => setEditing("new")}><Plus size={18} aria-hidden="true" />Add Office</button>} />
+      <PageHeader eyebrow="Administration · Locations" title="Locations · RTA Offices" description="RTA registration offices. Users, plates and POS terminals are assigned to an office." actions={canEdit ? <button type="button" className="btn btn-p" onClick={() => setEditing("new")}><Plus size={18} aria-hidden="true" />Add Office</button> : undefined} />
+      <LocationsNav />
       <FilterBar>
         <SearchField id="office-q" value={q} onChange={setQ} placeholder="Name, code, district or address" />
         <FilterSelect id="office-prov" label="Province" value={province} onChange={setProvince} options={PROVINCE_NAMES.map((p) => ({ value: p, label: p }))} all="All provinces" />
@@ -108,14 +113,14 @@ export default function OfficesPage() {
                 title={o.code}
                 badge={<ActiveBadge active={o.status === "active"} />}
                 lines={[o.name, `${o.district}, ${o.province}`, o.address, `${o.phone} · ${o.email}`]}
-                footer={<button type="button" className="btn btn-s" onClick={() => setEditing(o)}><Pencil size={14} aria-hidden="true" />Edit</button>}
+                footer={canEdit ? <button type="button" className="btn btn-s" onClick={() => setEditing(o)}><Pencil size={14} aria-hidden="true" />Edit</button> : undefined}
               />
             )}
-            empty={{ title: "No offices found", message: q || province || status ? "No offices match the current filters." : "Add the first RTA office to get started.", action: { label: "Add Office", onClick: () => setEditing("new") } }}
+            empty={{ title: "No offices found", message: q || province || status ? "No offices match the current filters." : "Add the first RTA office to get started.", action: canEdit ? { label: "Add Office", onClick: () => setEditing("new") } : undefined }}
           />
         </>
       )}
-      {editing && <OfficeForm key={editing === "new" ? "new" : editing.id} office={editing === "new" ? null : editing} onDone={() => setEditing(null)} />}
+      {editing && canEdit && <OfficeForm key={editing === "new" ? "new" : editing.id} office={editing === "new" ? null : editing} onDone={() => setEditing(null)} />}
     </div>
   );
 }

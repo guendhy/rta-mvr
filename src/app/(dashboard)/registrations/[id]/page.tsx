@@ -9,6 +9,7 @@ import { auditService } from "@/services/audit.service";
 import { useDemoUser } from "@/hooks/use-demo-user";
 import { useServiceQuery } from "@/hooks/use-service";
 import { PAYMENT_METHOD_LABELS, REGISTRATION_STATUS, WIZARD_STEPS } from "@/lib/constants";
+import { transactionLabel } from "@/config/transaction-types";
 import { formatDateTime, formatMoney } from "@/lib/formatting";
 import { isClosed, stepForStatus } from "@/lib/workflow";
 import { AUDIT_ACTION_LABELS } from "@/data/mock/audit-logs";
@@ -18,7 +19,8 @@ import { StatusBadge } from "@/components/ui/status-badge";
 import { OwnerCard, VehicleCard } from "@/components/registrations/cards";
 import { DocumentsPanel } from "@/components/registrations/documents-panel";
 import { ApprovalPanel } from "@/components/registrations/approval-panel";
-import { AssessmentTable } from "@/components/registrations/assessment-panel";
+import { FeeBreakdown } from "@/components/fees/fee-breakdown";
+import { DescriptionList } from "@/components/ui/layout-bits";
 import { RegistrationSuccess } from "@/components/registrations/registration-success";
 import { InspectionPanel } from "@/components/inspections/inspection-panel";
 import { InsurancePanel } from "@/components/insurance/insurance-panel";
@@ -37,7 +39,7 @@ function RecordView({ id }: { id: string }) {
 
   if (error) return <ErrorState message={error} onRetry={() => reload()} />;
   if (loading && !detail) return <PageSkeleton />;
-  if (!detail) return <EmptyState title="Application not found" message="This registration application does not exist." action={{ label: "All applications", href: "/registrations" }} />;
+  if (!detail) return <EmptyState title="Application not found" message="This application does not exist." action={{ label: "All applications", href: "/registrations" }} />;
   const app = detail.application;
   const step = stepForStatus(app);
   const decisionStage = ["for_approval", "approved", "registered", "returned", "rejected"].includes(app.status);
@@ -45,21 +47,21 @@ function RecordView({ id }: { id: string }) {
 
   return (
     <div className="flex flex-col gap-6">
-      <Breadcrumbs items={[{ label: "Dashboard", href: "/dashboard" }, { label: "Registrations", href: "/registrations" }, { label: app.transactionNumber }]} />
+      <Breadcrumbs items={[{ label: "Dashboard", href: "/dashboard" }, { label: "Applications", href: "/registrations" }, { label: app.transactionNumber }]} />
       <PageHeader
-        eyebrow={app.type === "renewal" ? "Registration renewal" : "New motorcycle registration"}
+        eyebrow={transactionLabel(app.type)}
         title={app.transactionNumber}
         badge={<StatusBadge kind="registration" status={app.status} />}
         description={<>{detail.office?.name} · created {formatDateTime(app.createdAt)} by {app.createdByName}{app.registrationNumber && <> · <span className="mono font-semibold text-[#0b0b0f]">{app.registrationNumber}</span></>}</>}
         actions={
           <>
             {app.status === "registered" && <RegistrationDocButtons detail={detail} autoOpen={autoPrint} />}
-            {!isClosed(app.status) && canWork && <Link href={`/registrations/new?id=${app.id}`} className="btn btn-p">Open in workflow · Step {step} {WIZARD_STEPS[step - 1].label}<ArrowRight size={16} aria-hidden="true" /></Link>}
+            {!isClosed(app.status) && canWork && <Link href={`/registrations/new?id=${app.id}`} className="btn btn-p">Open in workflow · Step {step} {WIZARD_STEPS[step - 1]?.label}<ArrowRight size={16} aria-hidden="true" /></Link>}
           </>
         }
       />
       {app.scenario && <Alert tone="info" title={app.scenario}>Seeded UAT scenario record.</Alert>}
-      {app.previousApplicationId && detail.previous && <Alert tone="info" title="Renewal of an earlier registration">Previous transaction <Link href={`/registrations/${detail.previous.id}`} className="mono">{detail.previous.transactionNumber}</Link> — history is kept, never overwritten.</Alert>}
+      {app.previousApplicationId && detail.previous && <Alert tone="info" title="Follows an earlier transaction">Previous transaction <Link href={`/registrations/${detail.previous.id}`} className="mono">{detail.previous.transactionNumber}</Link> ({transactionLabel(detail.previous.type)}) — history is kept, never overwritten.</Alert>}
 
       {decisionStage && (app.status === "registered" ? <RegistrationSuccess detail={detail} /> : <ApprovalPanel detail={detail} />)}
 
@@ -75,8 +77,15 @@ function RecordView({ id }: { id: string }) {
       {tab === "overview" && (
         <div className="split">
           <div className="l">
-            {detail.owner ? <OwnerCard owner={detail.owner} /> : <Alert tone="warn" title="Owner not captured" />}
-            {detail.motorcycle ? <VehicleCard motorcycle={detail.motorcycle} /> : <Alert tone="warn" title="Motorcycle not captured" />}
+            {detail.owner ? <OwnerCard owner={detail.owner} title={detail.newOwner ? "Current owner (seller)" : "Registered owner"} /> : <Alert tone="warn" title="Owner not captured" />}
+            {detail.newOwner && <OwnerCard owner={detail.newOwner} title="New owner (buyer)" />}
+            {detail.vehicle ? <VehicleCard vehicle={detail.vehicle} title="Vehicle" /> : <Alert tone="warn" title="Vehicle not captured" />}
+            {app.changeRequest && (
+              <Section title="Requested changes" description={app.changeRequest.summary}>
+                {app.changeRequest.changes.length > 0 && <DescriptionList items={app.changeRequest.changes.map((c) => [c.label, <span key={c.field}>{c.from ?? "—"} → <strong>{c.to}</strong></span>])} />}
+                {app.closureReason && <p className="m-0 text-[13.5px]"><strong>Reason:</strong> {app.closureReason}</p>}
+              </Section>
+            )}
           </div>
           <div className="r">
             <Section title="Status timeline">
@@ -93,7 +102,7 @@ function RecordView({ id }: { id: string }) {
                 ))}
               </ol>
             </Section>
-            {app.assessment && <Section title="Assessment"><AssessmentTable assessment={app.assessment} /></Section>}
+            {app.assessment && <Section title="Fee assessment"><FeeBreakdown assessment={app.assessment} compact /></Section>}
           </div>
         </div>
       )}

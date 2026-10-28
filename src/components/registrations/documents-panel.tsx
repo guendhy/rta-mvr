@@ -5,17 +5,21 @@ import { toast } from "sonner";
 import { CheckCircle2, Eye, FileText, XCircle } from "lucide-react";
 import { registrationService } from "@/services/registration.service";
 import { useDemoUser } from "@/hooks/use-demo-user";
-import { DOCUMENT_TYPES } from "@/lib/constants";
+import { DOCUMENT_DEFS, documentLabel } from "@/config/document-requirements";
 import { friendlyError } from "@/lib/errors";
 import { formatBytes, formatDateTime } from "@/lib/formatting";
 import { previewStore } from "@/lib/preview-store";
 import { FileDrop } from "@/components/ui/file-upload";
 import { ConfirmDialog, Modal } from "@/components/ui/modal";
 import { Alert } from "@/components/ui/feedback";
-import { StatusBadge } from "@/components/ui/status-badge";
+import { Badge, StatusBadge } from "@/components/ui/status-badge";
 import type { ApplicationDocument, RegistrationApplication } from "@/types";
 
-/** Document cards with Upload / Preview / Replace / Verify / Reject (local simulation). */
+/**
+ * DocumentRequirementList — one card per document the rules require (or allow) for this
+ * transaction, vehicle type, use and ownership type. Upload / Preview / Replace / Verify /
+ * Reject are local simulations.
+ */
 export function DocumentsPanel({ application, canUpload }: { application: RegistrationApplication; canUpload: boolean }) {
   const { can } = useDemoUser();
   const canVerify = can("documents.verify");
@@ -24,9 +28,10 @@ export function DocumentsPanel({ application, canUpload }: { application: Regist
   const [busy, setBusy] = useState<string | null>(null);
   const key = (d: ApplicationDocument) => `${application.id}:doc:${d.type}`;
 
-  if (application.type === "renewal" && application.documents.length === 0) {
-    return <Alert tone="info" title="No new documents required for renewal">Owner identification and ownership documents are already on record from the original registration. Roadworthiness and insurance are checked in the next steps.</Alert>;
+  if (application.documents.length === 0) {
+    return <Alert tone="info" title="No documents required">The requirement rules do not ask for supporting documents for this transaction. Inspection and insurance are checked in the next steps where they apply.</Alert>;
   }
+  const ordered = [...application.documents].sort((a, b) => Number(b.required) - Number(a.required));
 
   const run = async (id: string, fn: () => Promise<unknown>, ok: string) => {
     setBusy(id);
@@ -42,18 +47,21 @@ export function DocumentsPanel({ application, canUpload }: { application: Regist
 
   return (
     <div className="g2">
-      {DOCUMENT_TYPES.map((def) => {
-        const doc = application.documents.find((d) => d.type === def.type);
-        if (!doc) return null;
+      {ordered.map((doc) => {
+        const def = { label: documentLabel(doc.type), help: DOCUMENT_DEFS[doc.type]?.help ?? "" };
         const isPdf = doc.file?.type === "application/pdf" || doc.file?.name.endsWith(".pdf");
         return (
           <div key={doc.id} className="card flex flex-col gap-3 p-[18px]">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <p className="m-0 text-[15px] font-semibold">{def.label}{def.required && application.type === "new" && <span className="req" aria-label="required">*</span>}</p>
+                <p className="m-0 text-[15px] font-semibold">{def.label}{doc.required && <span className="req" aria-label="required">*</span>}</p>
                 <p className="mut m-0 mt-0.5 text-[12.5px]">{def.help}</p>
+                {doc.reason && <p className="m-0 mt-1 text-[12px] font-semibold text-[#3a3f4a]">Why: {doc.reason}</p>}
               </div>
-              <StatusBadge kind="document" status={doc.status} />
+              <div className="flex flex-col items-end gap-1">
+                <StatusBadge kind="document" status={doc.status === "missing" ? (doc.required ? "required" : "optional") : doc.status} />
+                {doc.status !== "missing" && <Badge tone="draft">{doc.required ? "Required" : "Optional"}</Badge>}
+              </div>
             </div>
             {doc.file && (
               <div className="flex items-center gap-3">
@@ -89,7 +97,7 @@ export function DocumentsPanel({ application, canUpload }: { application: Regist
           </div>
         );
       })}
-      <Modal open={!!preview} onClose={() => setPreview(null)} title={DOCUMENT_TYPES.find((d) => d.type === preview?.type)?.label ?? "Document"} size="lg" description={preview?.file?.name}>
+      <Modal open={!!preview} onClose={() => setPreview(null)} title={preview ? documentLabel(preview.type) : "Document"} size="lg" description={preview?.file?.name}>
         {preview && (() => {
           const local = previewStore.get(key(preview));
           if (!local) return (
@@ -110,7 +118,7 @@ export function DocumentsPanel({ application, canUpload }: { application: Regist
         open={!!rejecting}
         onClose={() => setRejecting(null)}
         title="Reject document"
-        message={<>Reject <strong>{DOCUMENT_TYPES.find((d) => d.type === rejecting?.type)?.label}</strong>? The officer must upload a replacement.</>}
+        message={<>Reject <strong>{rejecting ? documentLabel(rejecting.type) : ""}</strong>? The officer must upload a replacement.</>}
         confirmLabel="Reject Document"
         tone="danger"
         requireReason

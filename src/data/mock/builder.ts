@@ -1,7 +1,10 @@
-import { addMonths, subDays } from "date-fns";
-import { DOCUMENT_TYPES, provinceCode } from "@/lib/constants";
+import { DEFAULT_DOCUMENT_RULES, type DocumentRule } from "@/config/document-requirements";
+import { provinceCode } from "@/lib/constants";
+import { applyCompletionToVehicle, approvalNumbers, labelOwnership } from "@/lib/completion";
+import { calculateVehicleFees, monthsOverdue, toAssessment } from "@/lib/fees";
 import { generators, token, uuid } from "@/lib/generators";
 import { fullName } from "@/lib/formatting";
+import { resolveApplicationRequirements, syncDocuments } from "@/lib/requirements";
 import type {
   AppNotification,
   AppSettings,
@@ -9,11 +12,10 @@ import type {
   Assessment,
   AuditEvent,
   Counters,
-  Fee,
+  FeeRule,
   Inspection,
   InspectionCenter,
   InsuranceRecord,
-  Motorcycle,
   Office,
   Owner,
   Payment,
@@ -24,12 +26,13 @@ import type {
   RegistrationStatus,
   RolePermissionMatrix,
   User,
+  Vehicle,
 } from "@/types";
 import type { ApplicationSpec, TargetStage } from "./applications";
 import { auditEvent } from "./audit-logs";
 import { buildInspection } from "./inspections";
 import { buildInsurance } from "./insurance";
-import { centerForOffice, OFFICE_IDS } from "./offices";
+import { centerForOffice, OFFICE_IDS, SEED_CENTERS } from "./offices";
 import { buildPayment } from "./payments";
 import { USER_IDS } from "./users";
 
@@ -38,11 +41,12 @@ export interface MockDb {
   users: User[];
   permissions: RolePermissionMatrix;
   owners: Owner[];
-  motorcycles: Motorcycle[];
+  vehicles: Vehicle[];
   applications: RegistrationApplication[];
   inspections: Inspection[];
   insurance: InsuranceRecord[];
-  fees: Fee[];
+  feeRules: FeeRule[];
+  documentRules: DocumentRule[];
   payments: Payment[];
   plates: Plate[];
   audit: AuditEvent[];
@@ -81,6 +85,7 @@ function userById(db: MockDb, id: string): User {
 function staffFor(db: MockDb, officeId: string) {
   return {
     registration: userById(db, officeId === OFFICE_IDS.LAE ? USER_IDS.laeRegistration : USER_IDS.registration),
+    verification: userById(db, USER_IDS.verification),
     inspector: userById(db, officeId === OFFICE_IDS.HGN ? USER_IDS.hagenInspection : USER_IDS.inspection),
     cashier: userById(db, officeId === OFFICE_IDS.KKP ? USER_IDS.kokopoCashier : USER_IDS.cashier),
     supervisor: userById(db, USER_IDS.supervisor),
@@ -92,44 +97,67 @@ function terminalFor(db: MockDb, officeId: string): string {
   return db.terminals.find((t) => t.officeId === officeId && t.status === "online")?.terminalId ?? "RTA-POM-001";
 }
 
-export function feeAmount(db: Pick<MockDb, "fees">, code: Fee["code"]): Fee {
-  const fee = db.fees.find((f) => f.code === code && f.active);
-  if (!fee) throw new Error(`Fee ${code} is not configured.`);
-  return fee;
+/** Fee assessment for an application, from the configured rules. */
+export function buildAssessment(
+  db: Pick<MockDb, "feeRules">,
+  app: Pick<RegistrationApplication, "type" | "inspectionRequired" | "plateRequired" | "draft">,
+  vehicle: Vehicle,
+  by: string,
+  at: string,
+  opts: { optionalCodes?: string[]; periodMonths?: number; outstandingBalance?: number } = {},
+): Assessment {
+  const cls = app.type === "reclassification" ? { ...vehicle, ...app.draft.classification } : vehicle;
+  const overdue = app.type === "renewal" || app.type === "reinstatement" ? monthsOverdue(vehicle.registrationExpiry, new Date(at)) : 0;
+  const result = calculateVehicleFees({
+    transactionType: app.type,
+    vehicleType: cls.vehicleType,
+    vehicleClass: cls.vehicleClass,
+    vehicleUsage: cls.vehicleUsage,
+    specifications: { ...vehicle.specifications, ...(app.draft.vehicle?.specifications ?? {}) },
+    registrationPeriodMonths: opts.periodMonths ?? 12,
+    inspectionRequired: app.inspectionRequired,
+    newPlate: app.plateRequired,
+    monthsOverdue: overdue,
+    outstandingBalance: opts.outstandingBalance,
+    optionalCodes: opts.optionalCodes,
+    rules: db.feeRules,
+  });
+  return toAssessment(result, by, at);
 }
 
-export function buildAssessment(db: Pick<MockDb, "fees">, app: Pick<RegistrationApplication, "type">, moto: Pick<Motorcycle, "sidecar">, by: string, at: string, optional: Fee["code"][] = []): Assessment {
-  const reg = feeAmount(db, moto.sidecar ? "REG_SIDECAR" : "REG_NO_SIDECAR");
-  const lines = [{ feeCode: reg.code, name: reg.name, amount: reg.amount }];
-  if (app.type === "new") {
-    const plate = feeAmount(db, "NUMBER_PLATE");
-    lines.push({ feeCode: plate.code, name: plate.name, amount: plate.amount });
-  }
-  for (const code of optional) {
-    const fee = feeAmount(db, code);
-    if (!lines.some((l) => l.feeCode === code)) lines.push({ feeCode: fee.code, name: fee.name, amount: fee.amount });
-  }
-  return { lines, total: lines.reduce((s, l) => s + l.amount, 0), currency: "PGK", generatedAt: at, generatedBy: by };
+/** Documents that apply to this application right now. */
+export function documentsFor(db: Pick<MockDb, "documentRules">, app: Pick<RegistrationApplication, "type" | "documents" | "draft">, vehicle: Vehicle | null | undefined, owner: Owner | null | undefined): { documents: ApplicationDocument[]; inspectionRequired: boolean; insuranceRequired: boolean; plateRequired: boolean } {
+  const cls = app.type === "reclassification" ? { ...vehicle, ...app.draft.classification } : vehicle ?? app.draft.classification;
+  const req = resolveApplicationRequirements(
+    {
+      transactionType: app.type,
+      vehicleType: cls?.vehicleType,
+      vehicleUsage: cls?.vehicleUsage,
+      ownershipType: owner?.ownershipType,
+      importStatus: vehicle?.importStatus ?? app.draft.vehicle?.importStatus,
+      technicalChange: app.type === "change_vehicle" && !!app.draft.vehicle?.specifications,
+    },
+    db.documentRules?.length ? db.documentRules : DEFAULT_DOCUMENT_RULES,
+  );
+  return { documents: syncDocuments(app.documents, req.documents), inspectionRequired: req.inspectionRequired, insuranceRequired: req.insuranceRequired, plateRequired: req.plateRequired };
 }
 
-export function emptyDocuments(type: "new" | "renewal"): ApplicationDocument[] {
-  if (type === "renewal") return [];
-  return DOCUMENT_TYPES.map((d) => ({ id: uuid(), type: d.type, status: "missing" }));
-}
-
-export function expiryFrom(start: Date, months: number): Date {
-  return subDays(addMonths(start, months), 1);
+/** Takes the next available plate of the right series, preferring the vehicle's office. */
+export function pickPlate(plates: Plate[], vehicle: Vehicle, officeId: string): Plate | undefined {
+  const cat = vehicle.plateCategory ?? "private";
+  return plates.find((p) => p.status === "available" && p.category === cat && p.officeId === officeId) ?? plates.find((p) => p.status === "available" && p.category === cat);
 }
 
 /**
- * Builds one application and every related record by walking it through the real
- * workflow order. Used by the first-run seed and by Demo Tools scenario loading.
+ * Builds one transaction and every related record by walking it through the real workflow
+ * order. Used by the first-run seed and by Demo Tools scenario loading.
  */
 export function buildApplication(db: MockDb, spec: ApplicationSpec & { at: Date; previousApplicationId?: string }, now: Date): RegistrationApplication {
-  const moto = db.motorcycles[spec.moto] ?? db.motorcycles.find((m) => m.id === String(spec.moto));
-  if (!moto) throw new Error("Seed motorcycle missing");
-  const owner = db.owners.find((o) => o.id === moto.ownerId)!;
-  const staff = staffFor(db, moto.officeId);
+  const vehicle = db.vehicles[spec.vehicle] ?? db.vehicles.find((v) => v.id === String(spec.vehicle));
+  if (!vehicle) throw new Error("Seed vehicle missing");
+  const owner = db.owners.find((o) => o.id === vehicle.ownerId)!;
+  const newOwner = spec.newOwner !== undefined ? db.owners[spec.newOwner] : undefined;
+  const staff = staffFor(db, vehicle.officeId);
   const target = effective(spec.target);
   const reach = (s: TargetStage) => ORDER.indexOf(target) >= ORDER.indexOf(s);
 
@@ -147,21 +175,35 @@ export function buildApplication(db: MockDb, spec: ApplicationSpec & { at: Date;
     transactionNumber: generators.transactionNumber(now, db.counters),
     type: spec.type,
     status: "draft",
-    currentStep: 1,
-    officeId: moto.officeId,
+    currentStep: 2,
+    officeId: vehicle.officeId,
     createdBy: staff.registration.id,
     createdByName: fullName(staff.registration),
+    assignedOfficerId: staff.registration.id,
+    assignedOfficerName: fullName(staff.registration),
     ownerId: owner.id,
-    motorcycleId: moto.id,
+    vehicleId: vehicle.id,
     previousApplicationId: spec.previousApplicationId,
-    draft: {},
-    documents: emptyDocuments(spec.type),
+    draft: spec.reclassifyTo ? { classification: { ...spec.reclassifyTo, vehicleClass: vehicle.vehicleClass } } : {},
+    documents: [],
+    inspectionRequired: false,
+    insuranceRequired: false,
+    plateRequired: false,
     verificationToken: token(),
     history: [{ from: null, to: "draft", at: startedAt.toISOString(), by: staff.registration.id, byName: fullName(staff.registration) }],
     scenario: spec.scenario,
     createdAt: startedAt.toISOString(),
     updatedAt: startedAt.toISOString(),
   };
+  if (spec.type === "transfer" && newOwner) {
+    app.transfer = { previousOwnerId: owner.id, newOwnerId: newOwner.id, saleDate: startedAt.toISOString().slice(0, 10), salePrice: 45_000, reason: "sale", sellerConsent: true };
+  }
+  if (spec.reclassifyTo) {
+    app.changeRequest = { summary: `Reclassify ${vehicle.vehicleUsage} → ${spec.reclassifyTo.vehicleUsage}`, changes: [{ field: "vehicleUsage", label: "Vehicle use", from: vehicle.vehicleUsage, to: spec.reclassifyTo.vehicleUsage }] };
+  }
+  if (spec.closureReason) app.closureReason = spec.closureReason;
+  Object.assign(app, documentsFor(db, app, vehicle, newOwner ?? owner));
+
   const label = { id: app.id, label: app.transactionNumber };
   const log = (actor: User, action: AuditEvent["action"], entity: string, description: string) =>
     db.audit.push(auditEvent(actor, action, entity, description, iso(), label));
@@ -175,13 +217,18 @@ export function buildApplication(db: MockDb, spec: ApplicationSpec & { at: Date;
     owner.createdAt = app.createdAt;
     owner.updatedAt = app.createdAt;
   }
-  if (spec.type === "new") {
-    moto.createdAt = app.createdAt;
-    moto.updatedAt = app.createdAt;
+  if (newOwner && (newOwner.createdAt === SEED_PLACEHOLDER || newOwner.createdAt > app.createdAt)) {
+    newOwner.createdAt = app.createdAt;
+    newOwner.updatedAt = app.createdAt;
   }
-  moto.currentApplicationId = app.id;
+  if (spec.type === "new") {
+    vehicle.createdAt = app.createdAt;
+    vehicle.updatedAt = app.createdAt;
+  }
+  vehicle.currentApplicationId = app.id;
 
-  log(staff.registration, spec.type === "renewal" ? "renewal_created" : "registration_created", "Registration", `${spec.type === "renewal" ? "Renewal" : "New registration"} started for ${fullName(owner)} — ${moto.make} ${moto.model}`);
+  const vLabel = `${vehicle.make} ${vehicle.model}`;
+  log(staff.registration, spec.type === "renewal" ? "renewal_created" : "registration_created", "Registration", `${spec.type === "new" ? "New registration" : spec.type.replace(/_/g, " ")} started for ${fullName(owner)} — ${vLabel}`);
 
   const upload = (type: ApplicationDocument["type"], verified: boolean) => {
     const doc = app.documents.find((d) => d.type === type);
@@ -189,16 +236,17 @@ export function buildApplication(db: MockDb, spec: ApplicationSpec & { at: Date;
     doc.status = verified ? "verified" : "uploaded";
     doc.file = { name: `${type.replace(/_/g, "-")}.pdf`, size: 180_000 + Math.round(Math.random() * 900_000), type: "application/pdf", uploadedAt: iso() };
     if (verified) {
-      doc.verifiedBy = fullName(staff.registration);
+      doc.verifiedBy = fullName(staff.verification);
       doc.verifiedAt = iso();
     }
   };
+  const generated = new Set(["inspection_certificate", "insurance_certificate"]);
 
-  // Draft: owner captured, motorcycle captured, documents partly uploaded.
+  // Draft: owner and vehicle captured, identity uploaded.
   if (target === "draft") {
     tick(12);
-    upload("owner_identification", false);
-    app.currentStep = 3;
+    upload("proof_of_identity", false);
+    app.currentStep = 5;
     app.updatedAt = iso();
     db.applications.push(app);
     return app;
@@ -206,91 +254,104 @@ export function buildApplication(db: MockDb, spec: ApplicationSpec & { at: Date;
 
   // Documents + submission.
   tick(15);
-  if (spec.type === "new") {
-    for (const d of ["owner_identification", "proof_of_ownership", "import_purchase"] as const) upload(d, false);
-  }
-  app.currentStep = 3;
+  for (const d of app.documents) if (d.required && !generated.has(d.type)) upload(d.type, false);
+  app.currentStep = 5;
   app.submittedAt = iso();
-  move("pending", staff.registration, "Submitted for document review");
+  move("pending", staff.registration, "Submitted for verification");
   log(staff.registration, "registration_submitted", "Registration", "Application submitted");
-  if (!reach("for_inspection")) {
+  if (target === "pending") {
     db.applications.push(app);
     return app;
   }
 
   tick(10);
-  if (spec.type === "new" && !spec.docsUnverified) {
+  if (!spec.docsUnverified) {
     for (const d of app.documents) if (d.status === "uploaded") {
       d.status = "verified";
-      d.verifiedBy = fullName(staff.registration);
+      d.verifiedBy = fullName(staff.verification);
       d.verifiedAt = iso();
     }
+    log(staff.verification, "document_verified", "Document", "Supporting documents verified");
   }
-  move("for_inspection", staff.registration, "Documents reviewed — sent to inspection");
 
-  // Inspection.
+  // Inspection (only when the rules require it).
   const centerId = centerForOffice(app.officeId);
-  if (target === "for_inspection" && spec.target !== "inspection_failed") {
-    if (spec.scheduledInspection) {
-      tick(5);
-      const insp = buildInspection({ id: uuid(), applicationId: app.id, motorcycleId: moto.id, attempt: 1, centerId, inspectorId: staff.inspector.id, at: iso(), outcome: "scheduled" });
-      db.inspections.push(insp);
-      app.inspectionId = insp.id;
-      log(staff.inspector, "inspection_scheduled", "Inspection", `Inspection scheduled at centre for ${moto.make} ${moto.model}`);
+  const center = SEED_CENTERS.find((c) => c.id === centerId);
+  if (app.inspectionRequired) {
+    move("for_inspection", staff.verification, "Documents verified — sent to inspection");
+    if (target === "for_inspection" && spec.target !== "inspection_failed") {
+      if (spec.scheduledInspection) {
+        tick(5);
+        const insp = buildInspection({ id: uuid(), applicationId: app.id, vehicleId: vehicle.id, vehicleType: vehicle.vehicleType, attempt: 1, centerId, location: center?.name, inspectorId: staff.inspector.id, at: iso(), outcome: "scheduled", reference: generators.inspectionReference(provinceCode(vehicle.provinceOfOperation), new Date(t), db.counters) });
+        db.inspections.push(insp);
+        app.inspectionId = insp.id;
+        log(staff.inspector, "inspection_scheduled", "Inspection", `Inspection scheduled for ${vLabel}`);
+      }
+      db.applications.push(app);
+      return app;
     }
-    db.applications.push(app);
-    return app;
+    tick(45);
+    const failed = spec.target === "inspection_failed";
+    const odo = 4000 + (spec.vehicle * 7919) % 180000;
+    const insp = buildInspection({
+      id: uuid(),
+      applicationId: app.id,
+      vehicleId: vehicle.id,
+      vehicleType: vehicle.vehicleType,
+      attempt: 1,
+      centerId,
+      location: center?.name,
+      inspectorId: staff.inspector.id,
+      at: iso(),
+      outcome: failed ? "fail" : "pass",
+      reference: generators.inspectionReference(provinceCode(vehicle.provinceOfOperation), new Date(t), db.counters),
+      certificateNumber: failed ? undefined : generators.inspectionCertificateNumber(new Date(t), db.counters),
+      odometerKm: spec.type === "new" && vehicle.year >= 2024 ? 12 + spec.vehicle : odo,
+    });
+    db.inspections.push(insp);
+    app.inspectionId = insp.id;
+    log(staff.inspector, "inspection_submitted", "Inspection", failed ? "Inspection FAILED — reinspection required" : `Inspection PASSED — certificate ${insp.certificateNumber}`);
+    if (failed) {
+      move("inspection_failed", staff.inspector, insp.failureReason);
+      db.applications.push(app);
+      return app;
+    }
+    const rwDoc = app.documents.find((d) => d.type === "inspection_certificate");
+    if (rwDoc) Object.assign(rwDoc, { status: "verified", file: { name: `${insp.certificateNumber}.pdf`, size: 98_000, type: "application/pdf", uploadedAt: iso() }, verifiedBy: fullName(staff.inspector), verifiedAt: iso(), note: "Generated from inspection" });
   }
-  tick(45);
-  const failed = spec.target === "inspection_failed";
-  const insp = buildInspection({
-    id: uuid(),
-    applicationId: app.id,
-    motorcycleId: moto.id,
-    attempt: 1,
-    centerId,
-    inspectorId: staff.inspector.id,
-    at: iso(),
-    outcome: failed ? "fail" : "pass",
-    certificateNumber: failed ? undefined : generators.inspectionCertificateNumber(new Date(t), db.counters),
-  });
-  db.inspections.push(insp);
-  app.inspectionId = insp.id;
-  log(staff.inspector, "inspection_submitted", "Inspection", failed ? "Inspection FAILED — reinspection required" : `Inspection PASSED — certificate ${insp.certificateNumber}`);
-  if (failed) {
-    move("inspection_failed", staff.inspector, insp.failureReason);
-    db.applications.push(app);
-    return app;
-  }
-  const rwDoc = app.documents.find((d) => d.type === "roadworthiness_certificate");
-  if (rwDoc) Object.assign(rwDoc, { status: "verified", file: { name: `${insp.certificateNumber}.pdf`, size: 98_000, type: "application/pdf", uploadedAt: iso() }, verifiedBy: fullName(staff.inspector), verifiedAt: iso(), note: "Generated from inspection" });
-  move("for_insurance_verification", staff.inspector, `Roadworthy — ${insp.certificateNumber}`);
 
   // Insurance.
-  tick(20);
-  const insuranceStatus = target === "for_insurance_verification" ? spec.insuranceStatus ?? "pending" : "verified";
-  const ins = buildInsurance({
-    id: uuid(),
-    applicationId: app.id,
-    motorcycleId: moto.id,
-    policyHolder: fullName(owner),
-    vinOrChassis: moto.vin,
-    at: iso(),
-    status: insuranceStatus,
-    index: db.insurance.length,
-    verifiedBy: fullName(staff.registration),
-  });
-  db.insurance.push(ins);
-  app.insuranceId = ins.id;
-  if (target === "for_insurance_verification") {
-    if (insuranceStatus === "expired") log(staff.registration, "insurance_flagged", "Insurance", `Policy ${ins.policyNumber} expired on ${ins.coverageExpiry}`);
-    db.applications.push(app);
-    return app;
+  if (app.insuranceRequired) {
+    move("for_insurance_verification", app.inspectionRequired ? staff.inspector : staff.verification, app.inspectionRequired ? "Inspection passed" : "Documents verified");
+    tick(20);
+    const insuranceStatus = target === "for_insurance_verification" ? spec.insuranceStatus ?? "pending" : "verified";
+    const holder = newOwner ?? owner;
+    const ins = buildInsurance({
+      id: uuid(),
+      applicationId: app.id,
+      vehicleId: vehicle.id,
+      policyHolder: fullName(holder),
+      vinOrChassis: vehicle.vin,
+      at: iso(),
+      status: insuranceStatus,
+      index: db.insurance.length,
+      verifiedBy: fullName(staff.verification),
+      premium: vehicle.vehicleType === "motorcycle" || vehicle.vehicleType === "scooter" ? undefined : 240 + (spec.vehicle % 5) * 60,
+    });
+    db.insurance.push(ins);
+    app.insuranceId = ins.id;
+    if (target === "for_insurance_verification") {
+      if (insuranceStatus === "expired") log(staff.verification, "insurance_flagged", "Insurance", `Policy ${ins.policyNumber} expired on ${ins.coverageExpiry}`);
+      db.applications.push(app);
+      return app;
+    }
+    const insDoc = app.documents.find((d) => d.type === "insurance_certificate");
+    if (insDoc) Object.assign(insDoc, { status: "verified", file: ins.certificate, verifiedBy: fullName(staff.verification), verifiedAt: iso() });
+    log(staff.verification, "insurance_verified", "Insurance", `Policy ${ins.policyNumber} verified with ${ins.provider}`);
+    move("for_assessment", staff.verification, `Insurance verified — ${ins.policyNumber}`);
+  } else {
+    move("for_assessment", staff.verification, "Ready for assessment");
   }
-  const insDoc = app.documents.find((d) => d.type === "insurance_certificate");
-  if (insDoc) Object.assign(insDoc, { status: "verified", file: ins.certificate, verifiedBy: fullName(staff.registration), verifiedAt: iso() });
-  log(staff.registration, "insurance_verified", "Insurance", `Policy ${ins.policyNumber} verified with ${ins.provider}`);
-  move("for_assessment", staff.registration, `Insurance verified — ${ins.policyNumber}`);
   if (!reach("payment_required")) {
     db.applications.push(app);
     return app;
@@ -298,40 +359,45 @@ export function buildApplication(db: MockDb, spec: ApplicationSpec & { at: Date;
 
   // Assessment.
   tick(5);
-  app.assessment = buildAssessment(db, app, moto, fullName(staff.registration), iso());
+  app.assessment = buildAssessment(db, app, vehicle, fullName(staff.registration), iso());
   log(staff.registration, "assessment_generated", "Assessment", `Assessment generated — K ${app.assessment.total.toFixed(2)}`);
   move("payment_required", staff.registration, `Total due K ${app.assessment.total.toFixed(2)}`);
 
-  // Payments (failed attempts first, then the successful one if the target is past payment).
-  const method: PaymentMethod = spec.method ?? "pos";
-  let attempt = 0;
-  for (const f of spec.failedAttempts ?? []) {
-    tick(6);
+  if (app.assessment.total === 0) {
+    move("paid", staff.registration, "No amount due");
+    move("for_approval", staff.registration, "Sent for supervisor approval");
+  } else {
+    // Payments (failed attempts first, then the successful one if the target is past payment).
+    const method: PaymentMethod = spec.method ?? "pos";
+    let attempt = 0;
+    for (const f of spec.failedAttempts ?? []) {
+      tick(6);
+      attempt++;
+      const p = buildPayment({
+        id: uuid(), applicationId: app.id, method: "pos", amount: app.assessment.total, status: f === "declined" ? "declined" : "failed",
+        attempt, at: new Date(t), officeId: app.officeId, cashierId: staff.cashier.id, cashierName: fullName(staff.cashier),
+        terminalId: terminalFor(db, app.officeId), counters: db.counters, index: db.payments.length,
+      });
+      db.payments.push(p);
+      log(staff.cashier, "payment_failed", "Payment", `POS payment ${p.reference} ${p.status} — ${p.failureReason}`);
+    }
+    if (!reach("for_approval")) {
+      db.applications.push(app);
+      return app;
+    }
+    tick(8);
     attempt++;
-    const p = buildPayment({
-      id: uuid(), applicationId: app.id, method: "pos", amount: app.assessment.total, status: f === "declined" ? "declined" : "failed",
-      attempt, at: new Date(t), officeId: app.officeId, cashierId: staff.cashier.id, cashierName: fullName(staff.cashier),
-      terminalId: terminalFor(db, app.officeId), counters: db.counters, index: db.payments.length,
+    const pay = buildPayment({
+      id: uuid(), applicationId: app.id, method, amount: app.assessment.total, status: "successful", attempt, at: new Date(t),
+      officeId: app.officeId, cashierId: staff.cashier.id, cashierName: fullName(staff.cashier), terminalId: terminalFor(db, app.officeId),
+      counters: db.counters, index: db.payments.length,
     });
-    db.payments.push(p);
-    log(staff.cashier, "payment_failed", "Payment", `POS payment ${p.reference} ${p.status} — ${p.failureReason}`);
+    db.payments.push(pay);
+    app.paymentId = pay.id;
+    log(staff.cashier, "payment_processed", "Payment", `Payment ${pay.reference} received — K ${pay.amount.toFixed(2)} (${method.replace("_", " ")}) · receipt ${pay.receiptNumber}`);
+    move("paid", staff.cashier, `Receipt ${pay.receiptNumber}`);
+    move("for_approval", staff.cashier, "Sent for supervisor approval");
   }
-  if (!reach("for_approval")) {
-    db.applications.push(app);
-    return app;
-  }
-  tick(8);
-  attempt++;
-  const pay = buildPayment({
-    id: uuid(), applicationId: app.id, method, amount: app.assessment.total, status: "successful", attempt, at: new Date(t),
-    officeId: app.officeId, cashierId: staff.cashier.id, cashierName: fullName(staff.cashier), terminalId: terminalFor(db, app.officeId),
-    counters: db.counters, index: db.payments.length,
-  });
-  db.payments.push(pay);
-  app.paymentId = pay.id;
-  log(staff.cashier, "payment_processed", "Payment", `Payment ${pay.reference} received — K ${pay.amount.toFixed(2)} (${method.replace("_", " ")}) · receipt ${pay.receiptNumber}`);
-  move("paid", staff.cashier, `Receipt ${pay.receiptNumber}`);
-  move("for_approval", staff.cashier, "Sent for supervisor approval");
 
   // Supervisor decision.
   tick(30);
@@ -342,6 +408,7 @@ export function buildApplication(db: MockDb, spec: ApplicationSpec & { at: Date;
     else app.rejectReason = spec.reason;
     log(staff.supervisor, decision === "returned" ? "registration_returned" : "registration_rejected", "Registration", `${decision === "returned" ? "Returned for correction" : "Rejected"}: ${spec.reason}`);
     move(decision, staff.supervisor, spec.reason);
+    if (decision === "rejected") vehicle.currentApplicationId = undefined;
     db.applications.push(app);
     return app;
   }
@@ -351,47 +418,40 @@ export function buildApplication(db: MockDb, spec: ApplicationSpec & { at: Date;
   }
 
   const approvedAt = new Date(t);
-  const previous = spec.previousApplicationId ? db.applications.find((a) => a.id === spec.previousApplicationId) : undefined;
-  app.registrationNumber = previous?.registrationNumber ?? generators.registrationNumber(provinceCode(moto.provinceOfOperation), approvedAt, db.counters);
-  app.certificateNumber = generators.certificateNumber(approvedAt, db.counters);
-  app.labelNumber = generators.labelNumber(approvedAt, db.counters);
-  app.registrationDate = approvedAt.toISOString();
-  const months = db.settings.registration.validityMonths;
-  const prevExpiry = moto.registrationExpiry ? new Date(moto.registrationExpiry) : null;
-  app.expiryDate = (spec.type === "renewal" && prevExpiry && prevExpiry > approvedAt ? addMonths(prevExpiry, months) : expiryFrom(approvedAt, months)).toISOString();
+  Object.assign(app, approvalNumbers(app, vehicle, db.settings, approvedAt, db.counters));
   app.approval = { decision: "approved", by: staff.supervisor.id, byName: fullName(staff.supervisor), at: iso() };
   log(staff.supervisor, "registration_approved", "Registration", `Approved — registration ${app.registrationNumber}`);
 
-  if (spec.type === "renewal") {
-    app.plateNumber = moto.plateNumber;
-    move("registered", staff.supervisor, `Renewed until ${app.expiryDate.slice(0, 10)}`);
-  } else if (target === "approved") {
+  if (app.plateRequired) {
     move("approved", staff.supervisor, "Awaiting plate assignment");
-    db.applications.push(app);
-    return app;
-  } else {
-    move("approved", staff.supervisor, "Awaiting plate assignment");
+    if (target === "approved") {
+      db.applications.push(app);
+      return app;
+    }
     tick(15);
-    const plate = db.plates.find((p) => p.status === "available" && p.officeId === app.officeId) ?? db.plates.find((p) => p.status === "available");
+    const plate = pickPlate(db.plates, vehicle, app.officeId);
     if (plate) {
-      plate.status = "assigned";
-      plate.motorcycleId = moto.id;
-      plate.applicationId = app.id;
-      plate.assignedDate = iso();
-      plate.updatedAt = iso();
+      const old = vehicle.plateNumber ? db.plates.find((p) => p.plateNumber === vehicle.plateNumber) : undefined;
+      if (old) Object.assign(old, { status: "released", vehicleId: undefined, applicationId: undefined, notes: `Released — replaced by ${plate.plateNumber}`, updatedAt: iso() });
+      Object.assign(plate, { status: "assigned", vehicleId: vehicle.id, applicationId: app.id, assignedDate: iso(), updatedAt: iso() });
       app.plateNumber = plate.plateNumber;
-      log(staff.plate, "plate_assigned", "Plate", `Plate ${plate.plateNumber} assigned to ${moto.make} ${moto.model}`);
+      log(staff.plate, "plate_assigned", "Plate", `Plate ${plate.plateNumber} assigned to ${vLabel}`);
     }
     move("registered", staff.plate, `Plate ${app.plateNumber}`);
+  } else {
+    app.plateNumber = vehicle.plateNumber;
+    move("registered", staff.supervisor, app.type === "renewal" ? `Renewed until ${app.expiryDate?.slice(0, 10)}` : "Approved and completed");
   }
   app.completedAt = iso();
 
-  moto.registrationNumber = app.registrationNumber;
-  moto.plateNumber = app.plateNumber;
-  moto.registrationDate = moto.registrationDate && spec.type === "renewal" ? moto.registrationDate : app.registrationDate;
-  moto.registrationExpiry = app.expiryDate;
-  moto.registrationStatus = new Date(app.expiryDate) < now ? "expired" : "registered";
-  moto.updatedAt = iso();
+  const updated = applyCompletionToVehicle(app, vehicle, { now: approvedAt, newOwner });
+  if (updated.registrationExpiry && new Date(updated.registrationExpiry) < now && updated.registrationStatus === "active") updated.registrationStatus = "expired";
+  Object.assign(vehicle, labelOwnership(updated, db.owners));
+  if (app.type === "transfer") log(staff.supervisor, "ownership_transferred", "Vehicle", `Ownership transferred from ${fullName(owner)} to ${fullName(newOwner)}`);
+  if (app.type === "deregistration" && vehicle.plateNumber) {
+    const plate = db.plates.find((p) => p.plateNumber === vehicle.plateNumber);
+    if (plate) Object.assign(plate, { status: "released", vehicleId: undefined, applicationId: undefined, notes: "Returned at deregistration", updatedAt: iso() });
+  }
 
   db.applications.push(app);
   return app;

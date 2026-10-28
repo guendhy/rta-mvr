@@ -5,14 +5,16 @@ import Link from "next/link";
 import { paymentService } from "@/services/payment.service";
 import { registrationService } from "@/services/registration.service";
 import { useServiceQuery } from "@/hooks/use-service";
-import { PAYMENT_METHOD_LABELS } from "@/lib/constants";
-import { formatDateTime, formatMoney, fullName, motorcycleLabel } from "@/lib/formatting";
+import { PAYMENT_METHOD_LABELS } from "@/config/payment-channels";
+import { transactionLabel } from "@/config/transaction-types";
+import { vehicleTypeLabel } from "@/config/vehicle-types";
+import { formatDateTime, formatMoney, fullName, vehicleLabel } from "@/lib/formatting";
 import { Breadcrumbs, DescriptionList, PageHeader, Section } from "@/components/ui/layout-bits";
 import { Alert, EmptyState, ErrorState, PageSkeleton } from "@/components/ui/feedback";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { QrCard } from "@/components/ui/qr-code";
 import { ReceiptButtons } from "@/components/payments/receipt-buttons";
-import { AssessmentTable } from "@/components/registrations/assessment-panel";
+import { FeeBreakdown } from "@/components/fees/fee-breakdown";
 
 export default function PaymentDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -24,7 +26,7 @@ export default function PaymentDetailPage({ params }: { params: Promise<{ id: st
   }, [id]);
   if (error) return <ErrorState message={error} onRetry={() => reload()} />;
   if (loading && !data) return <PageSkeleton />;
-  if (!data) return <EmptyState title="Payment not found" message="No payment transactions found for this reference." action={{ label: "Payment history", href: "/payments?tab=history" }} />;
+  if (!data) return <EmptyState title="Payment not found" message="No payment transaction matches this reference." action={{ label: "Payment history", href: "/payments?tab=history" }} />;
   const { payment: p, detail } = data;
   const app = detail?.application;
   const attempts = detail?.payments ?? [];
@@ -43,6 +45,7 @@ export default function PaymentDetailPage({ params }: { params: Promise<{ id: st
         <Alert tone="warn" title="Payment status unknown" action={<Link href={`/payments/collect/${app.id}`} className="btn btn-p btn-sm">Check Payment Status</Link>}>The terminal did not return a final result. Check the status before taking another payment.</Alert>
       )}
       {p.failureReason && p.status !== "unknown" && <Alert tone="bad" title={`Payment ${p.status}`}>{p.failureReason}</Alert>}
+      {p.status === "successful" && <Alert tone="ok" title="Payment successful">This transaction has already been paid — receipt {p.receiptNumber}. Additional payments for it are blocked.</Alert>}
       <div className="split">
         <div className="l">
           <Section title="Payment details">
@@ -56,27 +59,30 @@ export default function PaymentDetailPage({ params }: { params: Promise<{ id: st
               ["Approval code", <span key="ac" className="mono">{p.approvalCode ?? "—"}</span>],
               ["Card", p.cardMasked],
               ["Tendered / change", p.amountTendered !== undefined ? `${formatMoney(p.amountTendered)} / ${formatMoney(p.change)}` : undefined],
-              ["Bank / reference", p.bankName ? `${p.bankName} · ${p.bankReference ?? ""}` : undefined],
+              [p.method === "qr" ? "QR provider / reference" : p.method === "card" ? "Gateway / authorisation" : "Bank / reference", p.bankName || p.bankReference ? `${p.bankName ?? "—"} · ${p.bankReference ?? ""}` : undefined],
               ["Cashier", p.cashierName],
               ["Completed", formatDateTime(p.completedAt)],
             ]} />
           </Section>
-          {app?.assessment && <Section title="Assessment paid"><AssessmentTable assessment={app.assessment} /></Section>}
+          {app?.assessment && <Section title={p.status === "successful" ? "Fees paid" : "Fee breakdown"}><FeeBreakdown assessment={app.assessment} /></Section>}
         </div>
         <div className="r">
           {app && (
-            <Section title="Application">
+            <Section title="Transaction">
               <DescriptionList items={[
-                ["Transaction", <Link key="t" href={`/registrations/${app.id}`} className="mono">{app.transactionNumber}</Link>],
+                ["Transaction ref.", <Link key="t" href={`/registrations/${app.id}`} className="mono">{app.transactionNumber}</Link>],
+                ["Transaction type", transactionLabel(app.type)],
+                ["Registration no.", <span key="r" className="mono">{app.registrationNumber ?? detail?.vehicle?.registrationNumber ?? "Assigned on approval"}</span>],
                 ["Owner", fullName(detail?.owner)],
-                ["Motorcycle", motorcycleLabel(detail?.motorcycle)],
+                ["Vehicle", vehicleLabel(detail?.vehicle)],
+                ["Vehicle type", vehicleTypeLabel(detail?.vehicle?.vehicleType)],
                 ["Status", <StatusBadge key="s" kind="registration" status={app.status} />],
               ]} />
             </Section>
           )}
           {p.status === "successful" && <QrCard path={`/verify/receipt/${p.verificationToken}`} title="Scan to verify receipt" subtitle={p.receiptNumber ?? p.reference} />}
           {attempts.length > 1 && (
-            <Section title="All attempts for this application" description="One idempotency key — at most one successful charge.">
+            <Section title="All attempts for this transaction" description="One idempotency key — at most one successful charge.">
               <ul className="m-0 flex list-none flex-col divide-y divide-[#edeff3] p-0">
                 {attempts.map((a) => (
                   <li key={a.id} className="flex items-center justify-between gap-2 py-2 text-[13px]">

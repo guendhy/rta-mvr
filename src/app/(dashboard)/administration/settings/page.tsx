@@ -1,10 +1,13 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { Controller, useForm, type Control } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Bell, CreditCard, Database, Eraser, FileX, RotateCcw, Save, ScrollText, Trash2, Undo2 } from "lucide-react";
+import { PAYMENT_CHANNELS } from "@/config/payment-channels";
+import { useDemoUser } from "@/hooks/use-demo-user";
 import { useAction, useServiceQuery } from "@/hooks/use-service";
 import { formatDateTime } from "@/lib/formatting";
 import { settingsService } from "@/services/settings.service";
@@ -27,10 +30,11 @@ const schema = z.object({
     requirePlateBeforeCompletion: z.boolean(),
     requireInsuranceVerification: z.boolean(),
     requireInspection: z.boolean(),
+    expiringSoonDays: z.number({ invalid_type_error: "Enter the number of days" }).int("Use whole days").min(1, "At least 1 day").max(180, "At most 180 days"),
   }),
-  payments: z.object({ allowCash: z.boolean(), allowPos: z.boolean(), allowOnline: z.boolean(), allowBankTransfer: z.boolean() }),
+  payments: z.object({ allowCash: z.boolean(), allowPos: z.boolean(), allowCard: z.boolean(), allowQr: z.boolean(), allowOnline: z.boolean(), allowBankTransfer: z.boolean() }),
   demo: z.object({ enableDemoTools: z.boolean(), enableNetworkSimulator: z.boolean(), enableMockPos: z.boolean() }),
-}).refine((s) => s.payments.allowCash || s.payments.allowPos || s.payments.allowOnline || s.payments.allowBankTransfer, { message: "Allow at least one payment method.", path: ["payments", "allowCash"] });
+}).refine((s) => PAYMENT_CHANNELS.some((c) => s.payments[c.setting]), { message: "Allow at least one payment channel.", path: ["payments", "allowCash"] });
 type FormValues = z.infer<typeof schema>;
 
 type ToggleName =
@@ -42,7 +46,7 @@ function ToggleField({ control, name, label, description }: { control: Control<F
   return <Controller control={control} name={name} render={({ field }) => <Toggle checked={!!field.value} onChange={field.onChange} label={label} description={description} />} />;
 }
 
-function SettingsForm({ settings, offices }: { settings: AppSettings; offices: Office[] }) {
+function SettingsForm({ settings, offices, canEdit }: { settings: AppSettings; offices: Office[]; canEdit: boolean }) {
   const save = useAction((v: AppSettings) => settingsService.update(v), { success: "Settings saved" });
   const { register, handleSubmit, control, reset, formState: { errors, isDirty } } = useForm<FormValues>({ resolver: zodResolver(schema), defaultValues: settings });
   const onSubmit = async (v: FormValues) => {
@@ -51,54 +55,63 @@ function SettingsForm({ settings, offices }: { settings: AppSettings; offices: O
   };
   return (
     <form onSubmit={handleSubmit(onSubmit)} noValidate className="flex flex-col gap-6">
-      <Section title="General">
-        <div className="form">
-          <Field label="System name" required htmlFor="s-name" error={errors.general?.systemName?.message} className="full"><Input id="s-name" invalid={!!errors.general?.systemName} {...register("general.systemName")} /></Field>
-          <Field label="Default office" required htmlFor="s-office" error={errors.general?.defaultOfficeId?.message}><Select id="s-office" placeholder="Select office" options={offices.map((o) => ({ value: o.id, label: o.name }))} invalid={!!errors.general?.defaultOfficeId} {...register("general.defaultOfficeId")} /></Field>
-          <Field label="Currency" htmlFor="s-cur" help="Papua New Guinean Kina. Fixed for Phase 1."><Input id="s-cur" readOnly mono {...register("general.currency")} /></Field>
-          <Field label="Registration prefix" required htmlFor="s-prefix" error={errors.general?.registrationPrefix?.message} help="Used at the start of transaction numbers, e.g. RTA-MC."><Input id="s-prefix" mono invalid={!!errors.general?.registrationPrefix} {...register("general.registrationPrefix", { setValueAs: (v: string) => v.toUpperCase() })} /></Field>
-        </div>
-      </Section>
-
-      <div className="g2">
-        <Section title="Registration">
-          <Field label="Default validity period (months)" required htmlFor="s-valid" error={errors.registration?.validityMonths?.message}>
-            <Input id="s-valid" type="number" inputMode="numeric" min={1} max={60} invalid={!!errors.registration?.validityMonths} {...register("registration.validityMonths", { valueAsNumber: true })} />
-          </Field>
-          <div className="mt-2 flex flex-col divide-y divide-[#edeff3]">
-            <ToggleField control={control} name="registration.requirePlateBeforeCompletion" label="Require plate before completion" description="A registration is only marked Registered once a plate is assigned." />
-            <ToggleField control={control} name="registration.requireInsuranceVerification" label="Require insurance verification" description="Third-party insurance must be verified before assessment." />
-            <ToggleField control={control} name="registration.requireInspection" label="Require inspection" description="A passed roadworthiness inspection is required before assessment." />
+      <fieldset disabled={!canEdit || save.busy} className="m-0 flex min-w-0 flex-col gap-6 border-0 p-0">
+        <legend className="sr">System settings</legend>
+        <Section title="General">
+          <div className="form">
+            <Field label="System name" required htmlFor="s-name" error={errors.general?.systemName?.message} className="full" help="Shown on the sign-in page, receipts and certificates."><Input id="s-name" invalid={!!errors.general?.systemName} {...register("general.systemName")} /></Field>
+            <Field label="Default office" required htmlFor="s-office" error={errors.general?.defaultOfficeId?.message}><Select id="s-office" placeholder="Select office" options={offices.map((o) => ({ value: o.id, label: o.name }))} invalid={!!errors.general?.defaultOfficeId} {...register("general.defaultOfficeId")} /></Field>
+            <Field label="Currency" htmlFor="s-cur" help="Papua New Guinean Kina. Fixed for Phase 1."><Input id="s-cur" readOnly mono {...register("general.currency")} /></Field>
+            <Field label="Registration prefix" required htmlFor="s-prefix" error={errors.general?.registrationPrefix?.message} help="Used at the start of transaction numbers, e.g. REG."><Input id="s-prefix" mono invalid={!!errors.general?.registrationPrefix} {...register("general.registrationPrefix", { setValueAs: (v: string) => v.toUpperCase() })} /></Field>
           </div>
         </Section>
-        <Section title="Payments" description="Payment methods offered to cashiers.">
+
+        <div className="g2">
+          <Section title="Registration" description={<>Transaction types, statuses and plate categories are under <Link href="/administration/registration-config">Registration Configuration</Link>.</>}>
+            <div className="form">
+              <Field label="Default validity period (months)" required htmlFor="s-valid" error={errors.registration?.validityMonths?.message} help="Set according to RTA policy.">
+                <Input id="s-valid" type="number" inputMode="numeric" min={1} max={60} invalid={!!errors.registration?.validityMonths} {...register("registration.validityMonths", { valueAsNumber: true })} />
+              </Field>
+              <Field label="“Expiring Soon” window (days)" required htmlFor="s-soon" error={errors.registration?.expiringSoonDays?.message} help="Days before expiry a registration shows as Expiring Soon.">
+                <Input id="s-soon" type="number" inputMode="numeric" min={1} max={180} invalid={!!errors.registration?.expiringSoonDays} {...register("registration.expiringSoonDays", { valueAsNumber: true })} />
+              </Field>
+            </div>
+            <div className="flex flex-col divide-y divide-[#edeff3]">
+              <ToggleField control={control} name="registration.requirePlateBeforeCompletion" label="Require plate before completion" description="A transaction that issues a plate is only completed once the plate is assigned." />
+              <ToggleField control={control} name="registration.requireInsuranceVerification" label="Require insurance verification" description="Third-party (CTP) insurance must be verified before assessment where the transaction needs it." />
+              <ToggleField control={control} name="registration.requireInspection" label="Require inspection" description="A passed roadworthiness inspection is required before assessment where the inspection rules apply." />
+            </div>
+          </Section>
+          <Section title="Payment channels" description="Channels offered to cashiers at the payment step.">
+            <div className="flex flex-col divide-y divide-[#edeff3]">
+              {PAYMENT_CHANNELS.map((c) => (
+                <ToggleField key={c.method} control={control} name={`payments.${c.setting}`} label={c.label} description={`${c.description}${c.online ? " · needs a connection" : " · works offline"}`} />
+              ))}
+            </div>
+            {errors.payments?.allowCash?.message && <p className="err" role="alert">{errors.payments.allowCash.message}</p>}
+          </Section>
+        </div>
+
+        <Section title="Demo settings" description="UAT helpers. Disable these before a production-like demonstration.">
           <div className="flex flex-col divide-y divide-[#edeff3]">
-            <ToggleField control={control} name="payments.allowCash" label="Allow cash" />
-            <ToggleField control={control} name="payments.allowPos" label="Allow POS card" />
-            <ToggleField control={control} name="payments.allowOnline" label="Allow online payment" />
-            <ToggleField control={control} name="payments.allowBankTransfer" label="Allow bank transfer" />
+            <ToggleField control={control} name="demo.enableDemoTools" label="Enable demo tools" description="Shows the Demo Tools panel for loading scenarios and arming errors." />
+            <ToggleField control={control} name="demo.enableNetworkSimulator" label="Enable network simulator" description="Lets testers switch between online, weak and offline connections." />
+            <ToggleField control={control} name="demo.enableMockPos" label="Enable mock POS" description="Uses the simulated POS terminal instead of real hardware." />
           </div>
-          {errors.payments?.allowCash?.message && <p className="err" role="alert">{errors.payments.allowCash.message}</p>}
         </Section>
-      </div>
-
-      <Section title="Demo settings" description="UAT helpers. Disable these before a production-like demonstration.">
-        <div className="flex flex-col divide-y divide-[#edeff3]">
-          <ToggleField control={control} name="demo.enableDemoTools" label="Enable demo tools" description="Shows the Demo Tools panel for loading scenarios and arming errors." />
-          <ToggleField control={control} name="demo.enableNetworkSimulator" label="Enable network simulator" description="Lets testers switch between online, weak and offline connections." />
-          <ToggleField control={control} name="demo.enableMockPos" label="Enable mock POS" description="Uses the simulated Wiseasy terminal instead of real hardware." />
-        </div>
-      </Section>
+      </fieldset>
 
       <div className="card flex flex-wrap items-center justify-between gap-3 p-4">
-        <p className="mut m-0 text-[13px]">{isDirty ? "You have unsaved changes." : settings.updatedAt ? `Last saved ${formatDateTime(settings.updatedAt)}` : "Using default settings."}</p>
-        <div className="row gap-2">
-          {isDirty && <button type="button" className="btn btn-g" onClick={() => reset(settings)} disabled={save.busy}><Undo2 size={16} aria-hidden="true" />Discard</button>}
-          <button type="submit" className="btn btn-p" disabled={save.busy || !isDirty}>
-            {save.busy ? <span className="spin" aria-hidden="true" /> : <Save size={16} aria-hidden="true" />}
-            Save settings
-          </button>
-        </div>
+        <p className="mut m-0 text-[13px]">{!canEdit ? "Your role can view these settings but not change them." : isDirty ? "You have unsaved changes." : settings.updatedAt ? `Last saved ${formatDateTime(settings.updatedAt)}` : "Using default settings."}</p>
+        {canEdit && (
+          <div className="row gap-2">
+            {isDirty && <button type="button" className="btn btn-g" onClick={() => reset(settings)} disabled={save.busy}><Undo2 size={16} aria-hidden="true" />Discard</button>}
+            <button type="submit" className="btn btn-p" disabled={save.busy || !isDirty}>
+              {save.busy ? <span className="spin" aria-hidden="true" /> : <Save size={16} aria-hidden="true" />}
+              Save settings
+            </button>
+          </div>
+        )}
       </div>
     </form>
   );
@@ -107,10 +120,10 @@ function SettingsForm({ settings, offices }: { settings: AppSettings; offices: O
 type DemoKey = "restore" | "drafts" | "payments" | "plates" | "terminals" | "notifications" | "audit" | "all";
 
 const DEMO_ACTIONS: { key: DemoKey; label: string; description: string; confirm: string; icon: typeof Database; danger?: boolean; run: () => string }[] = [
-  { key: "restore", label: "Restore Original Seed Data", description: "Replaces every record with the original UAT data set.", confirm: "All owners, motorcycles, applications, payments and plates will be replaced with the original seed data. Changes made during testing will be lost.", icon: RotateCcw, run: () => { demoService.restoreSeed(); return "Original seed data restored"; } },
+  { key: "restore", label: "Restore Original Seed Data", description: "Replaces every record with the original UAT data set.", confirm: "All owners, vehicles, applications, payments and plates will be replaced with the original seed data. Changes made during testing will be lost.", icon: RotateCcw, run: () => { demoService.restoreSeed(); return "Original seed data restored"; } },
   { key: "drafts", label: "Clear Drafts", description: "Deletes all Draft registration applications.", confirm: "All Draft registration applications will be removed.", icon: FileX, run: () => { const n = demoService.clearDrafts(); return `${n} draft${n === 1 ? "" : "s"} cleared`; } },
   { key: "payments", label: "Reset Payments", description: "Removes payments taken during testing.", confirm: "Payments created during testing will be removed and unapproved applications returned to Payment Required.", icon: CreditCard, run: () => { const n = demoService.resetPayments(); return `${n} demo payment${n === 1 ? "" : "s"} removed`; } },
-  { key: "plates", label: "Reset Plate Inventory", description: "Restores the seed plate stock.", confirm: "Plate inventory will be restored to the seed stock. Plates held by registered motorcycles stay assigned.", icon: Database, run: () => { demoService.resetPlates(); return "Plate inventory reset"; } },
+  { key: "plates", label: "Reset Plate Inventory", description: "Restores the seed plate stock.", confirm: "Plate inventory will be restored to the seed stock. Plates held by registered vehicles stay assigned.", icon: Database, run: () => { demoService.resetPlates(); return "Plate inventory reset"; } },
   { key: "terminals", label: "Reset POS Terminals", description: "Restores seed terminals and the mock POS state.", confirm: "POS terminals and the mock terminal simulator will be restored to their defaults.", icon: CreditCard, run: () => { demoService.resetTerminals(); return "POS terminals reset"; } },
   { key: "notifications", label: "Clear Notifications", description: "Removes all in-app notifications.", confirm: "All notifications will be removed for every user.", icon: Bell, run: () => { demoService.clearNotifications(); return "Notifications cleared"; } },
   { key: "audit", label: "Clear Audit Logs", description: "Deletes the audit trail.", confirm: "The entire audit log will be deleted. Only a record of this reset will remain.", icon: ScrollText, danger: true, run: () => { demoService.clearAudit(); return "Audit log cleared"; } },
@@ -160,6 +173,8 @@ function DemoDataCard() {
 }
 
 export default function SettingsPage() {
+  const { can } = useDemoUser();
+  const canEdit = can("settings.manage");
   const settings = useServiceQuery(() => settingsService.get(), []);
   const offices = useServiceQuery(() => settingsService.listOffices(), []);
 
@@ -168,9 +183,14 @@ export default function SettingsPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <PageHeader eyebrow="Administration" title="Settings" description="System-wide configuration for registration, payments and demo behaviour." />
-      <SettingsForm key={settings.data.updatedAt ?? "default"} settings={settings.data} offices={offices.data} />
-      <DemoDataCard />
+      <PageHeader
+        eyebrow="Administration"
+        title="Settings"
+        description={<>System-wide settings for the PNG RTA Motor Vehicle Registration &amp; Payment System. Vehicle types live in <Link href="/administration/vehicle-config">Vehicle Configuration</Link> and fees in <Link href="/administration/fees">Fees &amp; Penalties</Link>.</>}
+      />
+      {!canEdit && <Alert tone="warn" title="View only">Your role can view these settings but cannot change them.</Alert>}
+      <SettingsForm key={settings.data.updatedAt ?? "default"} settings={settings.data} offices={offices.data} canEdit={canEdit} />
+      {canEdit && <DemoDataCard />}
     </div>
   );
 }

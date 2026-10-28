@@ -34,7 +34,17 @@ export function formatRelative(value: string | Date | undefined | null): string 
   return d ? formatDistanceToNow(d, { addSuffix: true }) : "—";
 }
 
-export function fullName(p: { firstName?: string; middleName?: string; lastName?: string } | undefined | null): string {
+type NameLike = { firstName?: string; middleName?: string; lastName?: string; organizationName?: string; ownershipType?: string };
+
+/** Display name — the organisation name for company / government / diplomatic owners. */
+export function fullName(p: NameLike | undefined | null): string {
+  if (!p) return "—";
+  if (p.organizationName && p.ownershipType && p.ownershipType !== "individual") return p.organizationName;
+  return [p.firstName, p.middleName, p.lastName].filter(Boolean).join(" ") || "—";
+}
+
+/** The person's own name (the representative for organisations). */
+export function personName(p: NameLike | undefined | null): string {
   if (!p) return "—";
   return [p.firstName, p.middleName, p.lastName].filter(Boolean).join(" ") || "—";
 }
@@ -55,9 +65,10 @@ export function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export function motorcycleLabel(m: { make?: string; model?: string; year?: number } | undefined | null): string {
+/** "Toyota Hilux SR 2025" */
+export function vehicleLabel(m: { make?: string; model?: string; variant?: string; year?: number } | undefined | null, opts: { variant?: boolean } = {}): string {
   if (!m?.make) return "—";
-  return [m.make, m.model, m.year].filter(Boolean).join(" ");
+  return [m.make, m.model, opts.variant ? m.variant : undefined, m.year].filter(Boolean).join(" ");
 }
 
 export function titleCase(s: string): string {

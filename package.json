@@ -2,7 +2,7 @@
   "name": "rta-mvr",
   "version": "1.0.0",
   "private": true,
-  "description": "PNG RTA Motorcycle Registration & Payment System — Phase 1 static interactive prototype",
+  "description": "PNG RTA Motor Vehicle Registration & Payment System — static interactive prototype",
   "scripts": {
     "dev": "next dev",
     "build": "next build",

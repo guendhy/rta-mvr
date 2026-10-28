@@ -5,10 +5,10 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: {
-    default: "RTA Motorcycle Registration & Payment System",
-    template: "%s · RTA Motorcycle Registration",
+    default: "PNG RTA Motor Vehicle Registration & Payment System",
+    template: "%s · PNG RTA Motor Vehicle Registration",
   },
-  description: "Papua New Guinea Road Traffic Authority — Motorcycle Registration & Payment System (Phase 1 demo prototype).",
+  description: "Road Traffic Authority — Papua New Guinea · Motor Vehicle Registration & Payment System (demo prototype).",
   icons: { icon: "/brand/rta-logo.png" },
 };
 

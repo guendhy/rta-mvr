@@ -25,8 +25,8 @@ const schema = z.object({
 });
 type FormValues = z.infer<typeof schema>;
 
-/** Only the eight role demo accounts are offered as quick-fill buttons. */
-const DEMO_ACCOUNTS = SEED_USERS.slice(0, 8);
+/** One quick-fill demo account per role. */
+const DEMO_ACCOUNTS = SEED_USERS.filter((u, i, all) => u.status === "active" && all.findIndex((x) => x.role === u.role) === i);
 
 function LoginForm() {
   const router = useRouter();
@@ -65,7 +65,7 @@ function LoginForm() {
             <p className="m-0 text-[15px] font-extrabold tracking-[.12em]">ROAD TRAFFIC AUTHORITY</p>
             <p className="m-0 mt-1 text-[15px] text-[#c4c7d0]">Papua New Guinea</p>
           </div>
-          <h1 className="m-0 text-[32px] leading-[1.08] font-extrabold tracking-[-.025em] sm:text-[44px]">Motorcycle Registration &amp; Payment System</h1>
+          <h1 className="m-0 text-[32px] leading-[1.08] font-extrabold tracking-[-.025em] sm:text-[44px]">Motor Vehicle Registration &amp; Payment System</h1>
           <div className="max-w-[240px] overflow-hidden rounded-[3px]"><Flag height={6} /></div>
         </div>
         <div className="relative flex flex-col gap-1 text-[12.5px] text-[#9ea2ae]">

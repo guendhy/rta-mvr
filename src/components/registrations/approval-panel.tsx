@@ -8,7 +8,11 @@ import { registrationService } from "@/services/registration.service";
 import { useDemoUser } from "@/hooks/use-demo-user";
 import { useServiceQuery } from "@/hooks/use-service";
 import { friendlyError } from "@/lib/errors";
-import { formatDate, formatDateTime, formatMoney, fullName, motorcycleLabel } from "@/lib/formatting";
+import { formatDate, formatDateTime, formatMoney, fullName, vehicleLabel } from "@/lib/formatting";
+import { transactionLabel } from "@/config/transaction-types";
+import { vehicleClassLabel, vehicleTypeLabel } from "@/config/vehicle-types";
+import { vehicleUsageLabel } from "@/config/vehicle-usage";
+import { ownershipTypeLabel } from "@/config/ownership-types";
 import { PAYMENT_METHOD_LABELS } from "@/lib/constants";
 import { ConfirmDialog } from "@/components/ui/modal";
 import { Alert } from "@/components/ui/feedback";
@@ -16,12 +20,13 @@ import { Section } from "@/components/ui/layout-bits";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { CheckRow } from "./cards";
 import { DocumentsPanel } from "./documents-panel";
-import { AssessmentTable } from "./assessment-panel";
+import { FeeBreakdown } from "@/components/fees/fee-breakdown";
+import { DescriptionList } from "@/components/ui/layout-bits";
 import { PlateAssignInline } from "./plate-assign-inline";
 import { RegistrationSuccess } from "./registration-success";
 import type { RegistrationDetail } from "@/services/interfaces";
 
-/** Supervisor approval (spec §35–37): review everything, then Approve / Return / Reject. */
+/** Supervisor approval: review everything for any transaction type, then Approve / Return / Reject. */
 export function ApprovalPanel({ detail }: { detail: RegistrationDetail }) {
   const { can } = useDemoUser();
   const app = detail.application;
@@ -35,7 +40,7 @@ export function ApprovalPanel({ detail }: { detail: RegistrationDetail }) {
   if (app.status === "approved") {
     return (
       <div className="flex flex-col gap-5">
-        <Alert tone="ok" title={`Approved — registration ${app.registrationNumber}`}>Approved by {app.approval?.byName} on {formatDateTime(app.approval?.at)}. Certificate {app.certificateNumber} and label {app.labelNumber} are reserved. Assign a number plate to complete the registration.</Alert>
+        <Alert tone="ok" title={`Approved — registration ${app.registrationNumber}`}>Approved by {app.approval?.byName} on {formatDateTime(app.approval?.at)}. Certificate {app.certificateNumber}{app.labelNumber ? ` and label ${app.labelNumber}` : ""} reserved. Assign a number plate to complete the transaction.</Alert>
         <PlateAssignInline detail={detail} />
       </div>
     );
@@ -49,7 +54,7 @@ export function ApprovalPanel({ detail }: { detail: RegistrationDetail }) {
     );
   }
   if (app.status !== "for_approval") {
-    return <Alert tone="info" title="Approval not yet reached">The application reaches the supervisor after payment is successful.</Alert>;
+    return <Alert tone="info" title="Approval not yet reached">The application reaches the supervisor after payment is successful (or when no amount is due).</Alert>;
   }
 
   const decide = async (kind: "approve" | "return" | "reject", reason: string) => {
@@ -57,7 +62,7 @@ export function ApprovalPanel({ detail }: { detail: RegistrationDetail }) {
     try {
       if (kind === "approve") {
         const a = await registrationService.approve(app.id);
-        toast.success("Registration approved", { description: `${a.registrationNumber}${a.status === "approved" ? " · assign a plate next" : ""}` });
+        toast.success(`${transactionLabel(a.type)} approved`, { description: `${a.registrationNumber}${a.status === "approved" ? " · assign a plate next" : ""}` });
       } else if (kind === "return") {
         await registrationService.returnForCorrection(app.id, reason);
         toast.success("Returned for correction");
@@ -73,29 +78,40 @@ export function ApprovalPanel({ detail }: { detail: RegistrationDetail }) {
     }
   };
 
-  const { owner, motorcycle, inspection, insurance, payment } = detail;
+  const { owner, vehicle, newOwner, inspection, insurance, payment } = detail;
   return (
     <div className="split">
       <div className="l">
         <div className="g2">
-          <Section title="Owner">
-            <dl className="dl"><dt>Name</dt><dd>{fullName(owner)}</dd><dt>ID</dt><dd className="mono">{owner?.identificationNumber}</dd><dt>Mobile</dt><dd className="mono">{owner?.mobile}</dd><dt>Province</dt><dd>{owner?.province}</dd></dl>
+          <Section title={newOwner ? "Current owner (seller)" : "Registered owner"}>
+            <DescriptionList items={[["Name", fullName(owner)], ["Ownership", ownershipTypeLabel(owner?.ownershipType)], ["ID", <span key="i" className="mono">{owner?.organizationRegistrationNumber ?? owner?.identificationNumber}</span>], ["Mobile", <span key="m" className="mono">{owner?.mobile}</span>], ["Province", owner?.province]]} />
           </Section>
-          <Section title="Motorcycle">
-            <dl className="dl"><dt>Vehicle</dt><dd>{motorcycleLabel(motorcycle)} · {motorcycle?.color}</dd><dt>VIN</dt><dd className="mono">{motorcycle?.vin}</dd><dt>Engine</dt><dd className="mono">{motorcycle?.engineNumber}</dd><dt>Sidecar</dt><dd>{motorcycle?.sidecar ? "Yes" : "No"}</dd></dl>
+          {newOwner && (
+            <Section title="New owner (buyer)">
+              <DescriptionList items={[["Name", fullName(newOwner)], ["Ownership", ownershipTypeLabel(newOwner.ownershipType)], ["ID", <span key="i" className="mono">{newOwner.organizationRegistrationNumber ?? newOwner.identificationNumber}</span>], ["Sale date", formatDate(app.transfer?.saleDate)], ["Seller consent", app.transfer?.sellerConsent ? "Signed" : "Missing"]]} />
+            </Section>
+          )}
+          <Section title="Vehicle">
+            <DescriptionList items={[["Vehicle", `${vehicleLabel(vehicle)} · ${vehicle?.color ?? ""}`], ["Type / class", `${vehicleTypeLabel(vehicle?.vehicleType)} · ${vehicleClassLabel(vehicle?.vehicleType, vehicle?.vehicleClass)}`], ["Use", vehicleUsageLabel(vehicle?.vehicleUsage)], ["VIN", <span key="v" className="mono">{vehicle?.vin}</span>], ["Engine", <span key="e" className="mono">{vehicle?.engineNumber || "N/A"}</span>]]} />
           </Section>
+          {app.changeRequest && (
+            <Section title="Requested changes" description={app.changeRequest.summary}>
+              <DescriptionList items={app.changeRequest.changes.length ? app.changeRequest.changes.map((c) => [c.label, <span key={c.field}>{c.from ?? "—"} → <strong>{c.to}</strong></span>]) : [["Request", app.changeRequest.summary]]} />
+              {app.closureReason && <p className="m-0 text-[13.5px]"><strong>Reason:</strong> {app.closureReason}</p>}
+            </Section>
+          )}
           <Section title="Inspection" actions={inspection && <StatusBadge kind="inspection" status={inspection.status} />}>
-            <dl className="dl"><dt>Certificate</dt><dd className="mono">{inspection?.certificateNumber ?? "—"}</dd><dt>Date</dt><dd>{formatDate(inspection?.inspectionDate)}</dd><dt>Expiry</dt><dd>{formatDate(inspection?.certificateExpiry)}</dd></dl>
+            {app.inspectionRequired ? <dl className="dl"><dt>Reference</dt><dd className="mono">{inspection?.reference ?? "—"}</dd><dt>Certificate</dt><dd className="mono">{inspection?.certificateNumber ?? "—"}</dd><dt>Date</dt><dd>{formatDate(inspection?.inspectionDate)}</dd><dt>Expiry</dt><dd>{formatDate(inspection?.certificateExpiry)}</dd></dl> : <p className="mut m-0">Not required for this transaction.</p>}
           </Section>
           <Section title="Insurance" actions={insurance && <StatusBadge kind="insurance" status={insurance.status} />}>
-            <dl className="dl"><dt>Provider</dt><dd>{insurance?.provider ?? "—"}</dd><dt>Policy</dt><dd className="mono">{insurance?.policyNumber ?? "—"}</dd><dt>Cover to</dt><dd>{formatDate(insurance?.coverageExpiry)}</dd></dl>
+            {app.insuranceRequired ? <dl className="dl"><dt>Provider</dt><dd>{insurance?.provider ?? "—"}</dd><dt>Policy</dt><dd className="mono">{insurance?.policyNumber ?? "—"}</dd><dt>Cover to</dt><dd>{formatDate(insurance?.coverageExpiry)}</dd></dl> : <p className="mut m-0">Not required for this transaction.</p>}
           </Section>
-          <Section title="Assessment">{app.assessment ? <AssessmentTable assessment={app.assessment} /> : <p className="mut m-0">No assessment.</p>}</Section>
+          <Section title="Assessment" className="sm:col-span-2">{app.assessment ? <FeeBreakdown assessment={app.assessment} compact /> : <p className="mut m-0">No assessment.</p>}</Section>
           <Section title="Payment" actions={payment && <StatusBadge kind="payment" status={payment.status} />}>
             <dl className="dl"><dt>Amount</dt><dd>{formatMoney(payment?.amount)}</dd><dt>Method</dt><dd>{payment ? PAYMENT_METHOD_LABELS[payment.method] : "—"}</dd><dt>Receipt</dt><dd className="mono">{payment?.receiptNumber ?? "—"}</dd><dt>Reference</dt><dd className="mono">{payment ? <Link href={`/payments/${payment.id}`}>{payment.reference}</Link> : "—"}</dd></dl>
           </Section>
         </div>
-        <Section title="Documents" description={app.type === "renewal" ? "Renewals reuse the documents from the original registration." : "Verify every required document before approval."}>
+        <Section title="Documents" description="Verify every required document before approval.">
           <DocumentsPanel application={app} canUpload={false} />
         </Section>
       </div>
@@ -107,15 +123,15 @@ export function ApprovalPanel({ detail }: { detail: RegistrationDetail }) {
           {failing.length > 0 && <Alert tone="warn" title="Cannot approve yet">{failing.map((f) => f.label).join(" · ")}</Alert>}
           {canDecide ? (
             <div className="flex flex-col gap-2.5">
-              <button type="button" className="btn btn-ok btn-lg" disabled={!checklist || failing.length > 0 || busy} onClick={() => setDialog("approve")}><BadgeCheck size={18} aria-hidden="true" />Approve Registration</button>
+              <button type="button" className="btn btn-ok btn-lg" disabled={!checklist || failing.length > 0 || busy} onClick={() => setDialog("approve")}><BadgeCheck size={18} aria-hidden="true" />Approve {transactionLabel(app.type, true)}</button>
               <button type="button" className="btn btn-s" disabled={busy} onClick={() => setDialog("return")}><Undo2 size={16} aria-hidden="true" />Return for Correction</button>
               <button type="button" className="btn btn-do" disabled={busy} onClick={() => setDialog("reject")}><XCircle size={16} aria-hidden="true" />Reject</button>
             </div>
           ) : <Alert tone="info" title="Waiting for supervisor">Switch to the Supervisor role in Demo Tools to decide.</Alert>}
         </Section>
       </div>
-      <ConfirmDialog open={dialog === "approve"} onClose={() => setDialog(null)} busy={busy} tone="success" title="Approve registration?" confirmLabel="Approve Registration"
-        message={<>A registration number (<span className="mono">MC-{"{PROVINCE}"}-{new Date().getFullYear()}-NNNNNN</span>), certificate number and label number are generated for <strong>{motorcycleLabel(motorcycle)}</strong>.</>}
+      <ConfirmDialog open={dialog === "approve"} onClose={() => setDialog(null)} busy={busy} tone="success" title={`Approve ${transactionLabel(app.type).toLowerCase()}?`} confirmLabel="Approve"
+        message={<>{vehicle?.registrationNumber ? <>Registration <span className="mono">{vehicle.registrationNumber}</span> is kept</> : <>A registration number (<span className="mono">REG-{"{PROVINCE}"}-{String(new Date().getFullYear()).slice(2)}-NNNNNN</span>) is generated</>} and an updated certificate is issued for <strong>{vehicleLabel(vehicle)}</strong>. Previous owner and registration history are preserved.</>}
         onConfirm={() => decide("approve", "")} />
       <ConfirmDialog open={dialog === "return"} onClose={() => setDialog(null)} busy={busy} title="Return for correction" confirmLabel="Return Application" requireReason reasonLabel="What must be corrected?"
         message="The application goes back to the registration officer. Payment, inspection and insurance are kept." onConfirm={(r) => decide("return", r)} />

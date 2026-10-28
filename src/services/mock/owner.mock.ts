@@ -4,7 +4,7 @@ import { mockDelay } from "@/lib/mock-delay";
 import { fullName } from "@/lib/formatting";
 import type { OwnerService } from "../interfaces";
 import type { Owner, OwnerDuplicateMatch, OwnerInput } from "@/types";
-import { audit, consumeError, findById, nowIso, read, requirePermission, simulateNetwork, upsert } from "./core";
+import { audit, can, consumeError, findById, nowIso, read, requirePermission, simulateNetwork, upsert } from "./core";
 
 const digits = (s?: string) => (s ?? "").replace(/\D/g, "");
 const norm = (s?: string) => (s ?? "").trim().toLowerCase();
@@ -29,7 +29,9 @@ export class MockOwnerService implements OwnerService {
     return read("owners").filter((o) =>
       norm(fullName(o)).includes(q) ||
       norm(o.identificationNumber).includes(q) ||
-      (qd.length >= 4 && digits(o.mobile).includes(qd)),
+      norm(o.organizationRegistrationNumber).includes(q) ||
+      norm(o.authorizedRepresentative).includes(q) ||
+      (qd.length >= 4 && (digits(o.mobile).includes(qd) || digits(o.businessPhone).includes(qd))),
     ).slice(0, 20);
   }
 
@@ -43,13 +45,14 @@ export class MockOwnerService implements OwnerService {
       if (input.mobile && digits(input.mobile).length >= 7 && digits(o.mobile) === digits(input.mobile)) reasons.push("mobile");
       if (input.firstName && input.lastName && input.dateOfBirth &&
         norm(o.firstName) === norm(input.firstName) && norm(o.lastName) === norm(input.lastName) && o.dateOfBirth === input.dateOfBirth) reasons.push("name_dob");
+      if (input.organizationRegistrationNumber && norm(o.organizationRegistrationNumber) === norm(input.organizationRegistrationNumber)) reasons.push("organization");
       if (reasons.length) out.push({ owner: o, reasons });
     }
     return out;
   }
 
   async create(input: OwnerInput): Promise<Owner> {
-    requirePermission("registration.create", "create owners");
+    if (!can("transfer.create")) requirePermission("registration.create", "create owners");
     await mockDelay();
     simulateNetwork();
     if (consumeError("save_failed")) throw new ServiceError("storage", "The application could not be saved locally.");
@@ -61,7 +64,7 @@ export class MockOwnerService implements OwnerService {
   }
 
   async update(id: string, input: Partial<OwnerInput>): Promise<Owner> {
-    requirePermission("registration.edit", "edit owners");
+    if (!can("transfer.create")) requirePermission("registration.edit", "edit owners");
     await mockDelay();
     simulateNetwork();
     const current = findById("owners", id);

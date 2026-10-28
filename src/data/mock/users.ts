@@ -17,6 +17,7 @@ export const SEED_USERS: User[] = [
   { id: id(9), firstName: "Nathan", lastName: "Gumoi", email: "n.gumoi@rta.gov.pg", password: "password123", employeeNumber: "RTA-EMP-0611", role: "registration_officer", officeId: OFFICE_IDS.LAE, phone: "+675 7100 0611", status: "active", createdAt: ts, updatedAt: ts },
   { id: id(10), firstName: "Priscilla", lastName: "Tovue", email: "p.tovue@rta.gov.pg", password: "password123", employeeNumber: "RTA-EMP-0712", role: "cashier", officeId: OFFICE_IDS.KKP, phone: "+675 7100 0712", status: "active", createdAt: ts, updatedAt: ts },
   { id: id(11), firstName: "Albert", lastName: "Mek", email: "a.mek@rta.gov.pg", password: "password123", employeeNumber: "RTA-EMP-0813", role: "inspection_officer", officeId: OFFICE_IDS.HGN, phone: "+675 7100 0813", status: "active", createdAt: ts, updatedAt: ts },
+  { id: id(13), firstName: "Dorcas", lastName: "Pundi", email: "verification@rta.gov.pg", password: "password123", employeeNumber: "RTA-EMP-0255", role: "verification_officer", officeId: OFFICE_IDS.POM, phone: "+675 7100 0255", status: "active", createdAt: ts, updatedAt: ts },
   { id: id(12), firstName: "Wilma", lastName: "Daure", email: "w.daure@rta.gov.pg", password: "password123", employeeNumber: "RTA-EMP-0914", role: "cashier", officeId: OFFICE_IDS.MAD, phone: "+675 7100 0914", status: "disabled", createdAt: ts, updatedAt: ts },
 ];
 
@@ -32,4 +33,5 @@ export const USER_IDS = {
   laeRegistration: id(9),
   kokopoCashier: id(10),
   hagenInspection: id(11),
+  verification: id(13),
 };

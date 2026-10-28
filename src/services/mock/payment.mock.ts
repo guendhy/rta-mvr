@@ -1,6 +1,8 @@
 import { PAYMENT_METHOD_LABELS } from "@/lib/constants";
 import { ServiceError } from "@/lib/errors";
-import { fullName, motorcycleLabel } from "@/lib/formatting";
+import { fullName, vehicleLabel } from "@/lib/formatting";
+import { transactionLabel } from "@/config/transaction-types";
+import { vehicleTypeLabel } from "@/config/vehicle-types";
 import { generators, token, uuid } from "@/lib/generators";
 import { mockDelay } from "@/lib/mock-delay";
 import type { PaymentListFilter, PaymentQueueItem, PaymentService } from "../interfaces";
@@ -19,7 +21,7 @@ function paymentsFor(applicationId: string) {
 function assertPayable(applicationId: string) {
   const app = loadApp(applicationId);
   if (paymentsFor(applicationId).some((p) => p.status === "successful")) {
-    throw new ServiceError("conflict", "This registration has already been paid.");
+    throw new ServiceError("conflict", "This transaction has already been paid.");
   }
   if (app.status !== "payment_required" || !app.assessment) {
     throw new ServiceError("workflow", "This application is not ready for payment.");
@@ -58,7 +60,7 @@ function newPayment(applicationId: string, method: PaymentMethod, extra: Partial
 function finalizeSuccess(payment: Payment, extra: Partial<Payment> = {}): Payment {
   const app = loadApp(payment.applicationId);
   if (paymentsFor(app.id).some((p) => p.status === "successful" && p.id !== payment.id)) {
-    throw new ServiceError("conflict", "This registration has already been paid.");
+    throw new ServiceError("conflict", "This transaction has already been paid.");
   }
   const ts = nowIso();
   const done: Payment = { ...payment, ...extra, status: "successful", receiptNumber: generators.receiptNumber(), completedAt: ts, updatedAt: ts, failureReason: undefined };
@@ -101,7 +103,7 @@ export class MockPaymentService implements PaymentService {
       .map((application) => ({
         application,
         owner: findById("owners", application.ownerId),
-        motorcycle: findById("motorcycles", application.motorcycleId),
+        vehicle: findById("vehicles", application.vehicleId),
         lastAttempt: paymentsFor(application.id).sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0] ?? null,
       }))
       .sort((a, b) => b.application.updatedAt.localeCompare(a.application.updatedAt));
@@ -145,6 +147,20 @@ export class MockPaymentService implements PaymentService {
       throw new ServiceError("conflict", "This bank reference has already been used for another payment.");
     }
     const p = newPayment(applicationId, "bank_transfer", { bankName: input.bankName, bankReference: input.bankReference.trim() });
+    return finalizeSuccess(p);
+  }
+
+  async payElectronic(applicationId: string, input: { method: "card" | "qr"; reference: string; provider?: string }): Promise<Payment> {
+    requirePermission("payment.process", "take payments");
+    requireOnline();
+    await mockDelay(700, 1200);
+    simulateNetwork();
+    assertPayable(applicationId);
+    if (!input.reference.trim()) throw new ServiceError("validation", `Enter the ${input.method === "qr" ? "QR transaction" : "card authorisation"} reference.`);
+    if (read("payments").some((p) => p.status === "successful" && p.bankReference?.toLowerCase() === input.reference.trim().toLowerCase())) {
+      throw new ServiceError("conflict", "This reference has already been used for another payment.");
+    }
+    const p = newPayment(applicationId, input.method, { bankName: input.provider, bankReference: input.reference.trim() });
     return finalizeSuccess(p);
   }
 
@@ -208,19 +224,22 @@ export class MockPaymentService implements PaymentService {
     if (!p || p.status !== "successful") return null;
     const app = findById("applications", p.applicationId);
     const owner = findById("owners", app?.ownerId);
-    const moto = findById("motorcycles", app?.motorcycleId);
+    const v = findById("vehicles", app?.vehicleId);
     const office = findById("offices", p.officeId);
     return {
       receiptNumber: p.receiptNumber!,
       transactionNumber: app?.transactionNumber ?? "—",
-      registrationNumber: app?.registrationNumber ?? moto?.registrationNumber,
+      registrationNumber: app?.registrationNumber ?? v?.registrationNumber,
       owner: fullName(owner).toUpperCase(),
-      motorcycle: `${motorcycleLabel(moto)} ${moto?.color ?? ""}`.toUpperCase().trim(),
-      vinOrChassis: moto?.vin ?? "—",
-      engineNumber: moto?.engineNumber ?? "—",
+      vehicle: `${vehicleLabel(v)} ${v?.color ?? ""}`.toUpperCase().trim(),
+      vehicleType: vehicleTypeLabel(v?.vehicleType),
+      transactionType: transactionLabel(app?.type),
+      plateNumber: app?.plateNumber ?? v?.plateNumber,
+      vinOrChassis: v?.vin ?? "—",
+      engineNumber: v?.engineNumber || "—",
       paymentMethod: PAYMENT_METHOD_LABELS[p.method],
       amount: p.amount,
-      lines: app?.assessment?.lines.map((l) => ({ name: l.name, amount: l.amount })) ?? [{ name: "Registration", amount: p.amount }],
+      lines: app?.assessment?.lines.map((l) => ({ name: l.name, amount: l.amount, sample: l.sample })) ?? [{ name: "Registration", amount: p.amount }],
       paymentReference: p.reference,
       terminalId: p.terminalId,
       approvalCode: p.approvalCode,

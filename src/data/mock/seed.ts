@@ -3,8 +3,9 @@ import { emptyCounters } from "@/lib/generators";
 import { APPLICATION_SPECS } from "./applications";
 import { auditEvent } from "./audit-logs";
 import { buildApplication, type MockDb } from "./builder";
-import { SEED_FEES } from "./fees";
-import { SEED_MOTORCYCLES } from "./motorcycles";
+import { DEFAULT_DOCUMENT_RULES } from "@/config/document-requirements";
+import { SEED_FEE_RULES } from "@/config/fee-rules";
+import { SEED_VEHICLES } from "./vehicles";
 import { buildNotifications } from "./notifications";
 import { SEED_CENTERS, SEED_OFFICES } from "./offices";
 import { SEED_OWNERS } from "./owners";
@@ -22,11 +23,12 @@ export function createSeedDb(now = new Date()): MockDb {
     users: clone(SEED_USERS),
     permissions: clone(DEFAULT_PERMISSIONS),
     owners: clone(SEED_OWNERS),
-    motorcycles: clone(SEED_MOTORCYCLES),
+    vehicles: clone(SEED_VEHICLES),
     applications: [],
     inspections: [],
     insurance: [],
-    fees: clone(SEED_FEES),
+    feeRules: clone(SEED_FEE_RULES),
+    documentRules: clone(DEFAULT_DOCUMENT_RULES),
     payments: [],
     plates: buildPlates(plateDate),
     audit: [],
@@ -39,7 +41,7 @@ export function createSeedDb(now = new Date()): MockDb {
   };
 
   const plateOfficer = db.users.find((u) => u.role === "plate_officer")!;
-  db.audit.push(auditEvent(plateOfficer, "plates_received", "Plate", "50 motorcycle plates MC-1001 – MC-1050 received into inventory", `${plateDate}T09:00:00.000Z`));
+  db.audit.push(auditEvent(plateOfficer, "plates_received", "Plate", `${db.plates.length} plates received into inventory across private, commercial, PMV, taxi, government, diplomatic, motorcycle, trailer, emergency and special series`, `${plateDate}T09:00:00.000Z`));
 
   const built: string[] = [];
   APPLICATION_SPECS.forEach((spec) => {

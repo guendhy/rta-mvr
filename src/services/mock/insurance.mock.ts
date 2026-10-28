@@ -37,7 +37,7 @@ export class MockInsuranceService implements InsuranceService {
       ...(existing && existing.status === "pending" ? existing : { id: uuid(), createdAt: ts }),
       ...input,
       applicationId,
-      motorcycleId: app.motorcycleId!,
+      vehicleId: app.vehicleId!,
       status: "pending",
       remarks: undefined,
       verifiedAt: undefined,
@@ -74,11 +74,11 @@ export class MockInsuranceService implements InsuranceService {
       this.flag(id, "expired", `Coverage expired on ${rec.coverageExpiry}`);
       throw new ServiceError("validation", `Provider check: policy ${rec.policyNumber} expired on ${rec.coverageExpiry}. It has been marked Expired.`);
     }
-    const moto = findById("motorcycles", app.motorcycleId);
+    const vehicle = findById("vehicles", app.vehicleId);
     const v = rec.vinOrChassis.replace(/\W/g, "").toUpperCase();
-    if (moto && v !== moto.vin.toUpperCase() && v !== moto.chassisNumber.replace(/\W/g, "").toUpperCase()) {
-      this.flag(id, "invalid", "VIN / chassis on the policy does not match the motorcycle");
-      throw new ServiceError("validation", "Provider check: the VIN / chassis on the policy does not match this motorcycle. Marked Invalid.");
+    if (vehicle && v !== vehicle.vin.toUpperCase() && v !== vehicle.chassisNumber.replace(/\W/g, "").toUpperCase()) {
+      this.flag(id, "invalid", "VIN / chassis on the policy does not match the vehicle");
+      throw new ServiceError("validation", "Provider check: the VIN / chassis on the policy does not match this vehicle. Marked Invalid.");
     }
     const ts = nowIso();
     const next: InsuranceRecord = { ...rec, status: "verified", verifiedBy: actorName(), verifiedAt: ts, remarks: "Verified with provider (simulated)", updatedAt: ts };

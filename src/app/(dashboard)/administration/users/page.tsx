@@ -63,7 +63,8 @@ function UserForm({ user, offices, onDone }: { user: SafeUser | null; offices: O
 }
 
 export default function UsersPage() {
-  const { user: me } = useDemoUser();
+  const { user: me, can } = useDemoUser();
+  const canEdit = can("users.manage");
   const users = useServiceQuery(() => userService.list(), []);
   const offices = useServiceQuery(() => settingsService.listOffices(), []);
   const [q, setQ] = useState("");
@@ -83,7 +84,7 @@ export default function UsersPage() {
     );
   }, [users.data, q, role, status]);
 
-  const actions = (u: SafeUser, small = true) => (
+  const actions = (u: SafeUser, small = true) => !canEdit ? null : (
     <div className="flex flex-wrap gap-1.5">
       <button type="button" className={`btn btn-s ${small ? "btn-sm" : ""}`} onClick={() => setEditing(u)} aria-label={`Edit ${fullName(u)}`}><Pencil size={14} aria-hidden="true" />Edit</button>
       {u.status === "active" ? (
@@ -102,7 +103,7 @@ export default function UsersPage() {
     { id: "office", header: "Office", accessorFn: (u) => officeName(u.officeId) },
     { id: "status", header: "Status", accessorFn: (u) => u.status, cell: ({ row }) => <ActiveBadge active={row.original.status === "active"} off="Disabled" /> },
     { id: "login", header: "Last Login", accessorFn: (u) => u.lastLoginAt ?? "", cell: ({ row }) => <span className="mono whitespace-nowrap" title={formatDateTime(row.original.lastLoginAt)}>{row.original.lastLoginAt ? formatRelative(row.original.lastLoginAt) : "Never"}</span> },
-    { id: "actions", header: "Actions", enableSorting: false, cell: ({ row }) => actions(row.original) },
+    ...(canEdit ? [{ id: "actions", header: "Actions", enableSorting: false, cell: ({ row }) => actions(row.original) } satisfies ColumnDef<SafeUser, unknown>] : []),
   ];
 
   return (
@@ -110,8 +111,8 @@ export default function UsersPage() {
       <PageHeader
         eyebrow="Administration"
         title="Users"
-        description="RTA staff accounts, roles and office assignments."
-        actions={<button type="button" className="btn btn-p" onClick={() => setEditing("new")} disabled={!offices.data}><UserPlus size={18} aria-hidden="true" />Add User</button>}
+        description="RTA staff accounts, roles and office assignments. Role permissions are set under Roles & Permissions."
+        actions={canEdit ? <button type="button" className="btn btn-p" onClick={() => setEditing("new")} disabled={!offices.data}><UserPlus size={18} aria-hidden="true" />Add User</button> : undefined}
       />
       <FilterBar>
         <SearchField id="user-q" value={q} onChange={setQ} placeholder="Name, email or employee number" />
@@ -137,12 +138,12 @@ export default function UsersPage() {
                 footer={actions(u, false)}
               />
             )}
-            empty={{ title: "No users found", message: q || role || status ? "No users match the current filters." : "No user accounts exist yet.", action: { label: "Add User", onClick: () => setEditing("new") } }}
+            empty={{ title: "No users found", message: q || role || status ? "No users match the current filters." : "No user accounts exist yet.", action: canEdit ? { label: "Add User", onClick: () => setEditing("new") } : undefined }}
           />
         </>
       )}
 
-      {editing && offices.data && <UserForm key={editing === "new" ? "new" : editing.id} user={editing === "new" ? null : editing} offices={offices.data} onDone={() => setEditing(null)} />}
+      {editing && canEdit && offices.data && <UserForm key={editing === "new" ? "new" : editing.id} user={editing === "new" ? null : editing} offices={offices.data} onDone={() => setEditing(null)} />}
 
       <ConfirmDialog
         open={!!toggling}

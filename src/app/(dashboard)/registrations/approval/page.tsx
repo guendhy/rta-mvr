@@ -4,10 +4,13 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { registrationService } from "@/services/registration.service";
 import { ownerService } from "@/services/owner.service";
-import { motorcycleService } from "@/services/motorcycle.service";
+import { vehicleService } from "@/services/vehicle.service";
 import { paymentService } from "@/services/payment.service";
 import { useServiceQuery } from "@/hooks/use-service";
-import { formatDateTime, formatMoney, fullName, motorcycleLabel } from "@/lib/formatting";
+import { formatDateTime, formatMoney, fullName, vehicleLabel } from "@/lib/formatting";
+import { documentsChecklist } from "@/lib/workflow";
+import { transactionLabel } from "@/config/transaction-types";
+import { vehicleTypeLabel } from "@/config/vehicle-types";
 import { DataTable, MobileCard, type ColumnDef } from "@/components/ui/data-table";
 import { Breadcrumbs, KpiCard, PageHeader } from "@/components/ui/layout-bits";
 import { ErrorState } from "@/components/ui/feedback";
@@ -16,10 +19,10 @@ import { Badge, StatusBadge } from "@/components/ui/status-badge";
 export default function ApprovalQueuePage() {
   const router = useRouter();
   const { data, loading, error, reload } = useServiceQuery(async () => {
-    const [apps, owners, motos, pays] = await Promise.all([registrationService.list({ status: ["for_approval", "approved", "returned"] }), ownerService.list(), motorcycleService.list(), paymentService.list()]);
+    const [apps, owners, vehicles, pays] = await Promise.all([registrationService.list({ status: ["for_approval", "approved", "returned"] }), ownerService.list(), vehicleService.list(), paymentService.list()]);
     return apps.map((a) => {
-      const docsVerified = a.type === "renewal" || a.documents.filter((d) => ["owner_identification", "proof_of_ownership", "import_purchase"].includes(d.type)).every((d) => d.status === "verified");
-      return { app: a, owner: owners.find((o) => o.id === a.ownerId), moto: motos.find((m) => m.id === a.motorcycleId), payment: pays.find((p) => p.applicationId === a.id && p.status === "successful"), docsVerified };
+      const docsVerified = documentsChecklist(a).verified;
+      return { app: a, owner: owners.find((o) => o.id === a.ownerId), vehicle: vehicles.find((m) => m.id === a.vehicleId), payment: pays.find((p) => p.applicationId === a.id && p.status === "successful"), docsVerified };
     });
   }, []);
   type Row = NonNullable<typeof data>[number];
@@ -27,10 +30,11 @@ export default function ApprovalQueuePage() {
 
   const columns: ColumnDef<Row, unknown>[] = [
     { id: "txn", header: "Transaction", accessorFn: (r) => r.app.transactionNumber, cell: ({ row }) => <Link href={`/registrations/${row.original.app.id}`} className="mono font-semibold">{row.original.app.transactionNumber}</Link> },
-    { id: "type", header: "Type", accessorFn: (r) => r.app.type, cell: ({ row }) => (row.original.app.type === "new" ? "New" : "Renewal") },
+    { id: "type", header: "Transaction", accessorFn: (r) => transactionLabel(r.app.type, true) },
     { id: "owner", header: "Owner", accessorFn: (r) => fullName(r.owner) },
-    { id: "moto", header: "Motorcycle", accessorFn: (r) => motorcycleLabel(r.moto) },
-    { id: "paid", header: "Paid", meta: { align: "right" }, accessorFn: (r) => r.payment?.amount ?? 0, cell: ({ row }) => (row.original.payment ? formatMoney(row.original.payment.amount) : "—") },
+    { id: "vehicle", header: "Vehicle", accessorFn: (r) => vehicleLabel(r.vehicle) },
+    { id: "vtype", header: "Vehicle type", accessorFn: (r) => vehicleTypeLabel(r.vehicle?.vehicleType) },
+    { id: "paid", header: "Paid", meta: { align: "right" }, accessorFn: (r) => r.payment?.amount ?? 0, cell: ({ row }) => (row.original.payment ? formatMoney(row.original.payment.amount) : row.original.app.assessment?.total === 0 ? "Not due" : "—") },
     { id: "docs", header: "Documents", accessorFn: (r) => (r.docsVerified ? 1 : 0), cell: ({ row }) => (row.original.docsVerified ? <Badge tone="ok">Verified</Badge> : <Badge tone="pend">Needs review</Badge>) },
     { id: "status", header: "Status", accessorFn: (r) => r.app.status, cell: ({ row }) => <StatusBadge kind="registration" status={row.original.app.status} /> },
     { id: "since", header: "Paid at", accessorFn: (r) => r.payment?.completedAt ?? "", cell: ({ row }) => <span className="mono text-[12.5px]">{formatDateTime(row.original.payment?.completedAt)}</span> },
@@ -39,8 +43,8 @@ export default function ApprovalQueuePage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <Breadcrumbs items={[{ label: "Dashboard", href: "/dashboard" }, { label: "Registrations", href: "/registrations" }, { label: "Approval Queue" }]} />
-      <PageHeader title="Approval Queue" description="Paid applications waiting for a supervisor decision. Approval requires passed inspection, verified insurance, successful payment, verified documents and a valid assessment." />
+      <Breadcrumbs items={[{ label: "Dashboard", href: "/dashboard" }, { label: "Applications", href: "/registrations" }, { label: "Approvals" }]} />
+      <PageHeader title="Approval Queue" description="Paid transactions of every type waiting for a supervisor decision. Approval requires a passed inspection and verified insurance (where required), successful payment, verified documents and a valid assessment." />
       <div className="g4">
         <KpiCard label="Waiting for approval" value={waiting.length} />
         <KpiCard label="Documents need review" value={waiting.filter((r) => !r.docsVerified).length} />
@@ -54,8 +58,8 @@ export default function ApprovalQueuePage() {
           loading={loading}
           columns={columns}
           onRowClick={(r) => router.push(`/registrations/${r.app.id}`)}
-          mobileCard={(r) => <MobileCard href={`/registrations/${r.app.id}`} title={r.app.transactionNumber} badge={<StatusBadge kind="registration" status={r.app.status} />} lines={[fullName(r.owner), motorcycleLabel(r.moto)]} footer={<><span className="font-extrabold">{r.payment ? formatMoney(r.payment.amount) : "—"}</span>{r.docsVerified ? <Badge tone="ok">Docs verified</Badge> : <Badge tone="pend">Docs review</Badge>}</>} />}
-          empty={{ title: "Approval queue is empty", message: "No paid applications are waiting for supervisor approval." }}
+          mobileCard={(r) => <MobileCard href={`/registrations/${r.app.id}`} title={r.app.transactionNumber} badge={<StatusBadge kind="registration" status={r.app.status} />} lines={[fullName(r.owner), `${transactionLabel(r.app.type, true)} · ${vehicleLabel(r.vehicle)} · ${vehicleTypeLabel(r.vehicle?.vehicleType)}`]} footer={<><span className="font-extrabold">{r.payment ? formatMoney(r.payment.amount) : "—"}</span>{r.docsVerified ? <Badge tone="ok">Docs verified</Badge> : <Badge tone="pend">Docs review</Badge>}</>} />}
+          empty={{ title: "Approval queue is empty", message: "No paid transactions are waiting for supervisor approval." }}
         />
       )}
     </div>

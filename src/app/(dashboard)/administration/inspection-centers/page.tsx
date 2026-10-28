@@ -5,6 +5,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Pencil, Plus } from "lucide-react";
+import { useDemoUser } from "@/hooks/use-demo-user";
 import { useAction, useServiceQuery } from "@/hooks/use-service";
 import { PROVINCE_NAMES, districtsFor } from "@/lib/constants";
 import { inspectionService } from "@/services/inspection.service";
@@ -15,6 +16,7 @@ import { Modal } from "@/components/ui/modal";
 import { DataTable, MobileCard, type ColumnDef } from "@/components/ui/data-table";
 import { ErrorState } from "@/components/ui/feedback";
 import { ActiveBadge, FilterBar, FilterSelect, FormFooter, ResultCount, SearchField } from "@/components/admin/admin-bits";
+import { LocationsNav } from "@/components/admin/locations-nav";
 
 const schema = z.object({
   name: z.string().trim().min(3, "Enter the center name"),
@@ -57,6 +59,8 @@ function CenterForm({ center, onDone }: { center: InspectionCenter | null; onDon
 }
 
 export default function InspectionCentersPage() {
+  const { can } = useDemoUser();
+  const canEdit = can("centers.manage");
   const centers = useServiceQuery(() => inspectionService.listCenters(), []);
   const [q, setQ] = useState("");
   const [province, setProvince] = useState("");
@@ -75,12 +79,13 @@ export default function InspectionCentersPage() {
     { id: "district", header: "District", accessorFn: (c) => c.district },
     { id: "address", header: "Address", accessorFn: (c) => c.address, cell: ({ row }) => <span className="block max-w-[280px]">{row.original.address}</span> },
     { id: "status", header: "Status", accessorFn: (c) => c.status, cell: ({ row }) => <ActiveBadge active={row.original.status === "active"} /> },
-    { id: "actions", header: "Actions", enableSorting: false, cell: ({ row }) => <button type="button" className="btn btn-s btn-sm" onClick={() => setEditing(row.original)} aria-label={`Edit ${row.original.name}`}><Pencil size={14} aria-hidden="true" />Edit</button> },
+    ...(canEdit ? [{ id: "actions", header: "Actions", enableSorting: false, cell: ({ row }) => <button type="button" className="btn btn-s btn-sm" onClick={() => setEditing(row.original)} aria-label={`Edit ${row.original.name}`}><Pencil size={14} aria-hidden="true" />Edit</button> } satisfies ColumnDef<InspectionCenter, unknown>] : []),
   ];
 
   return (
     <div className="flex flex-col gap-6">
-      <PageHeader eyebrow="Administration" title="Inspection Centers" description="Roadworthiness inspection sites. Inactive centers cannot be selected when scheduling an inspection." actions={<button type="button" className="btn btn-p" onClick={() => setEditing("new")}><Plus size={18} aria-hidden="true" />Add Center</button>} />
+      <PageHeader eyebrow="Administration · Locations" title="Locations · Inspection Centers" description="Roadworthiness inspection sites for every vehicle type. Inactive centers cannot be selected when scheduling an inspection." actions={canEdit ? <button type="button" className="btn btn-p" onClick={() => setEditing("new")}><Plus size={18} aria-hidden="true" />Add Center</button> : undefined} />
+      <LocationsNav />
       <FilterBar>
         <SearchField id="center-q" value={q} onChange={setQ} placeholder="Name, code, district or address" />
         <FilterSelect id="center-prov" label="Province" value={province} onChange={setProvince} options={PROVINCE_NAMES.map((p) => ({ value: p, label: p }))} all="All provinces" />
@@ -102,14 +107,14 @@ export default function InspectionCentersPage() {
                 title={c.code}
                 badge={<ActiveBadge active={c.status === "active"} />}
                 lines={[c.name, `${c.district}, ${c.province}`, c.address]}
-                footer={<button type="button" className="btn btn-s" onClick={() => setEditing(c)}><Pencil size={14} aria-hidden="true" />Edit</button>}
+                footer={canEdit ? <button type="button" className="btn btn-s" onClick={() => setEditing(c)}><Pencil size={14} aria-hidden="true" />Edit</button> : undefined}
               />
             )}
-            empty={{ title: "No inspection centers found", message: q || province || status ? "No centers match the current filters." : "Add the first inspection center.", action: { label: "Add Center", onClick: () => setEditing("new") } }}
+            empty={{ title: "No inspection centers found", message: q || province || status ? "No centers match the current filters." : "Add the first inspection center.", action: canEdit ? { label: "Add Center", onClick: () => setEditing("new") } : undefined }}
           />
         </>
       )}
-      {editing && <CenterForm key={editing === "new" ? "new" : editing.id} center={editing === "new" ? null : editing} onDone={() => setEditing(null)} />}
+      {editing && canEdit && <CenterForm key={editing === "new" ? "new" : editing.id} center={editing === "new" ? null : editing} onDone={() => setEditing(null)} />}
     </div>
   );
 }

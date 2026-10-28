@@ -7,7 +7,7 @@ import { format } from "date-fns";
 import { toast } from "sonner";
 import { Download, FileSpreadsheet, FileText, Printer, RotateCcw, SlidersHorizontal } from "lucide-react";
 import { useServiceQuery } from "@/hooks/use-service";
-import { REPORT_CATALOG } from "@/data/mock/reports";
+import { REPORT_ALIASES, REPORT_CATALOG } from "@/data/mock/reports";
 import { downloadText, formatDateTime, formatMoney, toCsv } from "@/lib/formatting";
 import { printElement } from "@/lib/print";
 import { reportService } from "@/services/report.service";
@@ -17,30 +17,36 @@ import { PageHeader, Section } from "@/components/ui/layout-bits";
 import { Field } from "@/components/ui/form";
 import { ErrorState, PageSkeleton, Skeleton, TableSkeleton } from "@/components/ui/feedback";
 import { DataTable, MobileCard, type ColumnDef } from "@/components/ui/data-table";
-import { Donut, GenericBar } from "@/components/dashboard/charts";
+import { Donut, GenericBar, HorizontalBars } from "@/components/dashboard/charts";
 import { EMPTY_FILTERS, ReportFilterForm, activeFilters, describeFilters } from "@/components/reports/report-filters";
 import type { ReportColumn, ReportFilters, ReportKey, ReportResult } from "@/types";
 
 const PRINT_ID = "report-print-area";
-const MONEY_KEYS = new Set(["amount", "tendered", "change"]);
 const GROUPS = [...new Set(REPORT_CATALOG.map((r) => r.group))];
 
 type Row = Record<string, string | number>;
 
 function cellText(col: ReportColumn, v: string | number | undefined) {
   if (v === undefined || v === "") return "—";
-  if (typeof v === "number" && MONEY_KEYS.has(col.key)) return formatMoney(v);
+  if (typeof v === "number" && col.money) return formatMoney(v);
+  if (typeof v === "number") return v.toLocaleString("en-PG");
   return String(v);
+}
+
+function resolveKey(k: string | null): ReportKey {
+  if (!k) return REPORT_CATALOG[0].key;
+  if (REPORT_CATALOG.some((r) => r.key === k)) return k as ReportKey;
+  return REPORT_ALIASES[k as ReportKey] ?? REPORT_CATALOG[0].key;
 }
 
 function ReportsInner() {
   const router = useRouter();
   const params = useSearchParams();
-  const initial = params.get("report");
-  const [key, setKey] = useState<ReportKey>(REPORT_CATALOG.some((r) => r.key === initial) ? (initial as ReportKey) : REPORT_CATALOG[0].key);
+  const [key, setKey] = useState<ReportKey>(() => resolveKey(params.get("report")));
   const [filters, setFilters] = useState<ReportFilters>(EMPTY_FILTERS);
   const [generatedAt, setGeneratedAt] = useState(() => new Date());
-  const active = useMemo(() => activeFilters(filters), [filters]);
+  const meta = REPORT_CATALOG.find((r) => r.key === key) ?? REPORT_CATALOG[0];
+  const active = useMemo(() => activeFilters(filters, meta.filters), [filters, meta]);
   const filterKey = JSON.stringify(active);
   const dateInvalid = !!(filters.from && filters.to && filters.from > filters.to);
 
@@ -67,9 +73,8 @@ function ReportsInner() {
   if (lookups.error) return <ErrorState message={lookups.error} onRetry={() => lookups.reload()} />;
   if (!lookups.data) return <PageSkeleton />;
   const { offices, users } = lookups.data;
-  const meta = REPORT_CATALOG.find((r) => r.key === key)!;
   const result = report.data && report.data.key === key ? report.data : null;
-  const filterLines = describeFilters(active, offices, users);
+  const filterLines = describeFilters(active, offices, users, meta.dateLabel);
   const filtersOn = filterLines.length > 0;
   const stamp = format(new Date(), "yyyyMMdd");
   const fileBase = `rta-${key.replace(/_/g, "-")}-${stamp}`;
@@ -92,7 +97,7 @@ function ReportsInner() {
   }));
 
   const filterForm = (prefix: string) => (
-    <ReportFilterForm idPrefix={prefix} value={filters} onChange={setFilters} offices={offices} users={users} statusOptions={statusOptions} />
+    <ReportFilterForm idPrefix={prefix} value={filters} onChange={setFilters} offices={offices} users={users} statusOptions={statusOptions} fields={meta.filters} dateLabel={meta.dateLabel} />
   );
   const resetBtn = filtersOn ? <button type="button" className="btn btn-g btn-sm min-h-[44px]" onClick={() => setFilters(EMPTY_FILTERS)}><RotateCcw size={15} aria-hidden="true" />Reset filters</button> : null;
 
@@ -101,13 +106,13 @@ function ReportsInner() {
       <PageHeader
         eyebrow="Reports"
         title="Reports"
-        description="Interactive operational and revenue reports. Filters re-run the report instantly."
+        description="All registered motor vehicles · figures are computed from registry, receipt and audit records. Filters re-run the report instantly."
         actions={
           <>
-            <button type="button" className="btn btn-s" onClick={onPrint} disabled={!result}><Printer size={16} aria-hidden="true" />Print</button>
+            <button type="button" className="btn btn-s" onClick={onPdf} disabled={!result}><FileText size={16} aria-hidden="true" />PDF</button>
+            <button type="button" className="btn btn-s" onClick={onExcel} disabled={!result || !result.rows.length}><FileSpreadsheet size={16} aria-hidden="true" />Excel</button>
             <button type="button" className="btn btn-s" onClick={onCsv} disabled={!result || !result.rows.length}><Download size={16} aria-hidden="true" />Export CSV</button>
-            <button type="button" className="btn btn-s" onClick={onExcel} disabled={!result || !result.rows.length}><FileSpreadsheet size={16} aria-hidden="true" />Export Excel</button>
-            <button type="button" className="btn btn-s" onClick={onPdf} disabled={!result}><FileText size={16} aria-hidden="true" />Export PDF</button>
+            <button type="button" className="btn btn-k" onClick={onPrint} disabled={!result}><Printer size={16} aria-hidden="true" />Print view</button>
           </>
         }
       />
@@ -203,10 +208,12 @@ function ReportsInner() {
                   )}
 
                   {result.chart && result.chart.data.length > 0 && (
-                    <Section title={result.chart.valueFormat === "money" ? "Amount breakdown" : "Count breakdown"}>
+                    <Section title={result.chart.valueFormat === "money" ? "Amount breakdown" : "Count breakdown"} className="break-inside-avoid">
                       {result.chart.type === "pie"
-                        ? <Donut data={result.chart.data} money={result.chart.valueFormat === "money"} />
-                        : <GenericBar data={result.chart.data} money={result.chart.valueFormat === "money"} />}
+                        ? <Donut data={result.chart.data} money={result.chart.valueFormat === "money"} caption={meta.title} />
+                        : result.chart.data.length > 6
+                          ? <HorizontalBars data={result.chart.data} money={result.chart.valueFormat === "money"} caption={meta.title} />
+                          : <GenericBar data={result.chart.data} money={result.chart.valueFormat === "money"} caption={meta.title} />}
                     </Section>
                   )}
 
@@ -219,7 +226,7 @@ function ReportsInner() {
                       columns={columns}
                       mobileCard={(r) => {
                         const [first, ...rest] = result.columns;
-                        const amountCol = result.columns.find((c) => MONEY_KEYS.has(c.key) && c.key === "amount");
+                        const amountCol = result.columns.find((c) => c.money && c.key === "amount") ?? [...result.columns].reverse().find((c) => c.money);
                         return (
                           <MobileCard
                             title={first ? cellText(first, r[first.key]) : ""}
@@ -242,7 +249,7 @@ function ReportsInner() {
                       ))}
                     </tbody>
                   </table>
-                  <p className="hidden text-[10px] print:block">{result.rows.length} rows · Printed from the RTA Motorcycle Registration &amp; Payment System (UAT prototype).</p>
+                  <p className="hidden text-[10px] print:block">{result.rows.length} rows · Printed from the PNG RTA Motor Vehicle Registration &amp; Payment System (UAT prototype). Figures are computed from mock data.</p>
                 </>
               )}
             </div>

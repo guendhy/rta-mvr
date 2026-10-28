@@ -3,6 +3,7 @@ import { ServiceError } from "@/lib/errors";
 import { uuid } from "@/lib/generators";
 import { mockDelay } from "@/lib/mock-delay";
 import { ROLE_LABELS } from "@/lib/constants";
+import type { DocumentRule } from "@/config/document-requirements";
 import type { AuditListFilter, AuditService, NotificationService, SettingsService, UserInput, UserService } from "../interfaces";
 import type { AppNotification, AppSettings, AuditEvent, Office, Role, RolePermissionMatrix, SafeUser, User } from "@/types";
 import { audit, findById, mustFind, nowIso, read, requirePermission, simulateNetwork, upsert, write } from "./core";
@@ -122,6 +123,28 @@ export class MockSettingsService implements SettingsService {
     upsert("offices", rec);
     audit("office_saved", "Office", `Office ${rec.name} saved`, { id: rec.id, label: rec.code });
     return rec;
+  }
+
+  async listDocumentRules(): Promise<DocumentRule[]> {
+    await mockDelay(100, 300);
+    return read("documentRules");
+  }
+
+  async saveDocumentRule(rule: DocumentRule): Promise<DocumentRule> {
+    requirePermission("requirements.manage", "manage requirements");
+    await mockDelay();
+    simulateNetwork();
+    const list = read("documentRules");
+    const i = list.findIndex((r) => r.id === rule.id);
+    const nextId = () => {
+      const max = Math.max(0, ...list.map((r) => Number(r.id.replace(/\D/g, "")) || 0));
+      return `DR-${String(max + 1).padStart(2, "0")}`;
+    };
+    const saved = { ...rule, id: rule.id || nextId() };
+    const next = i >= 0 ? list.map((r) => (r.id === rule.id ? saved : r)) : [...list, saved];
+    write("documentRules", next);
+    audit("requirement_changed", "Requirement", `Document rule ${rule.id} (${rule.document.replace(/_/g, " ")}) saved`, { id: rule.id, label: rule.id });
+    return saved;
   }
 }
 

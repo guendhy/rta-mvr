@@ -85,11 +85,16 @@ export const KEYS = {
   users: "users",
   permissions: "permissions",
   owners: "owners",
-  motorcycles: "motorcycles",
+  vehicles: "vehicles",
+  /** Phase 1 key — read once by the legacy migration, then removed. */
+  legacyMotorcycles: "motorcycles",
   applications: "applications",
   inspections: "inspections",
   insurance: "insurance",
-  fees: "fees",
+  feeRules: "feeRules",
+  documentRules: "documentRules",
+  /** Phase 1 key — read once by the legacy migration, then removed. */
+  legacyFees: "fees",
   payments: "payments",
   plates: "plates",
   audit: "audit",

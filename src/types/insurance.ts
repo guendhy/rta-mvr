@@ -4,7 +4,7 @@ export type InsuranceStatus = "pending" | "verified" | "expired" | "invalid" | "
 
 export interface InsuranceRecord extends BaseRecord {
   applicationId: string;
-  motorcycleId: string;
+  vehicleId: string;
   provider: string;
   policyNumber: string;
   policyHolder: string;

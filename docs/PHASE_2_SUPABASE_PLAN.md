@@ -31,15 +31,19 @@ Tables map 1:1 to `src/types` (UUID primary keys, `created_at` / `updated_at`):
 | `profiles` | 1:1 with `auth.users`; role, office, employee number, status |
 | `role_permissions` | role → permission rows (replaces the permission matrix) |
 | `owners` | Unique index on `identification_number`; duplicate checks via RPC |
-| `motorcycles` | Unique indexes on `engine_number`, `chassis_number`, `vin` |
+| `vehicles` (was `motorcycles`) | `vehicle_type`, `vehicle_class`, `vehicle_usage`, `specifications jsonb`; unique `vin`, `chassis_number`, `engine_number` (nullable for trailers) |
+| `vehicle_types`, `vehicle_classes`, `vehicle_usage_categories`, `vehicle_field_rules` | Replace `src/config/vehicle-*.ts` |
+| `vehicle_ownership_history`, `registration_history` | Append-only; never overwritten |
+| `fee_rules`, `fee_assessments`, `fee_assessment_lines` | Replace `src/config/fee-rules.ts`; `is_sample` until the official schedule is loaded |
+| `document_rules`, `inspection_items`, `payment_items`, `rta_locations` | Requirement rules, checklist results, receipt lines, offices / centres / payment points |
 | `registration_applications` | Status enum, assessment JSONB, approval columns, verification token |
 | `application_status_history` | Replaces the embedded `history` array |
 | `application_documents` | Metadata + Storage object path |
 | `inspections`, `inspection_checklist_items` | One row per attempt |
 | `insurance_records` | Policy + verification fields |
-| `fees` | Versioned by `effective_date` |
+| `fees` | Phase 1 only — migrated into `fee_rules` |
 | `payments` | Unique `(idempotency_key) WHERE status = 'successful'` |
-| `plates` | Unique `plate_number`; `assigned` plates locked by `motorcycle_id` |
+| `plates` | Unique `plate_number`; `category` (plate series); `assigned` plates locked by `vehicle_id` |
 | `audit_events`, `notifications` | Append-only / per-user |
 | `counters` | Sequence table per scope — or Postgres sequences per year/province |
 
@@ -65,7 +69,7 @@ Business rules move into the database:
 
 ## 4. Storage
 
-- Buckets: `owner-documents`, `motorcycle-photos`, `insurance-certificates` (private).
+- Buckets: `owner-documents`, `vehicle-photos`, `insurance-certificates` (private).
 - Replace object-URL previews with signed URLs; keep `FileMeta` plus `storage_path`.
 - Size/type validation in the upload policy (10 MB, PDF/JPG/PNG).
 
@@ -102,3 +106,11 @@ Business rules move into the database:
 3. Replace `useServiceQuery` live updates with Supabase Realtime subscriptions where useful.
 4. Real auth, storage, payment provider and POS adapter.
 5. Security review, load test, production cut-over.
+
+## 9. Motor vehicle model migration
+
+`docs/migrations/0002_motor_vehicle_model.sql` generalises the motorcycle-only schema without
+dropping data: `motorcycles` is renamed to `vehicles` (a `motorcycles` view remains), every
+existing row gets `vehicle_type = 'motorcycle'`, organisations are added to `owners`, the
+application `type` check widens to every transaction type, and the fee table becomes a rule
+engine (`fee_rules`). Review and apply it manually — it is never run automatically.

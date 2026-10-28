@@ -72,9 +72,9 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
     >
       <div className="flex-1 overflow-y-auto px-3 pt-4 pb-4">
         {can("registration.create") && (
-          <Link href="/registrations/new" className={`btn btn-p mb-4 w-full no-underline ${collapsed ? "btn-icon" : ""}`} title="New Motorcycle Registration">
+          <Link href="/registrations/new" className={`btn btn-p mb-4 w-full no-underline ${collapsed ? "btn-icon" : ""}`} title="New Vehicle Transaction">
             <Plus size={18} strokeWidth={2.4} aria-hidden="true" />
-            {collapsed ? <span className="sr">New Motorcycle Registration</span> : "New Motorcycle Registration"}
+            {collapsed ? <span className="sr">New Vehicle Transaction</span> : "New Vehicle Transaction"}
           </Link>
         )}
         <NavList collapsed={collapsed} />

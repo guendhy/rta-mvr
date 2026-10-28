@@ -2,6 +2,7 @@
 
 import { Fragment, useMemo, useState } from "react";
 import { Lock, RotateCcw, Save, Undo2 } from "lucide-react";
+import { useDemoUser } from "@/hooks/use-demo-user";
 import { useAction, useServiceQuery } from "@/hooks/use-service";
 import { ROLE_LABELS, ROLE_ORDER } from "@/lib/constants";
 import { ALL_PERMISSIONS, DEFAULT_PERMISSIONS } from "@/lib/permissions";
@@ -28,6 +29,8 @@ function normalise(m: RolePermissionMatrix): RolePermissionMatrix {
 const same = (a: RolePermissionMatrix, b: RolePermissionMatrix) => ROLE_ORDER.every((r) => a[r].length === b[r].length && a[r].every((p) => b[r].includes(p)));
 
 export default function RolesPage() {
+  const { can } = useDemoUser();
+  const canEdit = can("roles.manage");
   const roles = useServiceQuery(() => userService.listRoles(), []);
   const matrix = useServiceQuery(() => userService.getPermissions(), []);
   const [draft, setDraft] = useState<RolePermissionMatrix | null>(null);
@@ -42,7 +45,7 @@ export default function RolesPage() {
   if (!current || !saved) return <PageSkeleton />;
 
   const toggle = (role: RoleKey, perm: Permission, on: boolean) => {
-    if (role === "super_admin") return;
+    if (role === "super_admin" || !canEdit) return;
     const base = draft ?? saved;
     const next = on ? [...base[role], perm] : base[role].filter((p) => p !== perm);
     setDraft({ ...base, [role]: ALL_KEYS.filter((k) => next.includes(k)) });
@@ -61,7 +64,7 @@ export default function RolesPage() {
         title="Roles & Permissions"
         description="Choose what each role can see and do. Changes apply to every user with that role the next time a screen loads."
         actions={
-          <>
+          canEdit && <>
             <button type="button" className="btn btn-s" onClick={() => setConfirmReset(true)} disabled={save.busy}><RotateCcw size={16} aria-hidden="true" />Reset to defaults</button>
             {dirty && <button type="button" className="btn btn-g" onClick={() => setDraft(null)} disabled={save.busy}><Undo2 size={16} aria-hidden="true" />Discard</button>}
             <button type="button" className="btn btn-p" onClick={() => draft && persist(draft)} disabled={!dirty || save.busy}>
@@ -72,6 +75,7 @@ export default function RolesPage() {
         }
       />
 
+      {!canEdit && <Alert tone="warn" title="View only">Your role can view the permission matrix but cannot change it.</Alert>}
       {dirty && <Alert tone="warn" title="You have unsaved permission changes">Select Save changes to apply them, or Discard to keep the current permissions.</Alert>}
 
       <div className="g4">
@@ -82,12 +86,12 @@ export default function RolesPage() {
               {r.key === "super_admin" ? <Badge tone="insp">Locked</Badge> : r.readOnly ? <Badge tone="draft">Read-only</Badge> : null}
             </div>
             <p className="mut m-0 text-[13px]">{r.description || "—"}</p>
-            <p className="m-0 text-[12.5px] font-semibold">{current[r.key].length} of {ALL_KEYS.length} permissions</p>
+            <p className="m-0 text-[12.5px] font-semibold">{(current[r.key] ?? []).length} of {ALL_KEYS.length} permissions</p>
           </div>
         ))}
       </div>
 
-      <Section title="Permission matrix" description="Super Admin always has every permission and cannot be edited.">
+      <Section title="Permission matrix" description={`Super Administrator always has every permission and cannot be edited. ${ALL_KEYS.length} permissions across ${GROUPS.length} areas.`}>
         <div className="-mx-6 -mb-[22px] overflow-x-auto border-t border-[#e1e4ea]">
           <table className="tbl min-w-[900px]">
             <caption className="sr">Permissions by role. Each checkbox grants one permission to one role.</caption>
@@ -124,7 +128,7 @@ export default function RolesPage() {
                                 type="checkbox"
                                 className="chk"
                                 checked={on}
-                                disabled={locked || save.busy}
+                                disabled={locked || !canEdit || save.busy}
                                 onChange={(e) => toggle(r, p.key, e.target.checked)}
                                 aria-label={`${ROLE_LABELS[r]}: ${p.label}`}
                               />

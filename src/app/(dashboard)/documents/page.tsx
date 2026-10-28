@@ -7,11 +7,13 @@ import { Search, X } from "lucide-react";
 import { useDemoUser } from "@/hooks/use-demo-user";
 import { useServiceQuery } from "@/hooks/use-service";
 import { useDebouncedValue } from "@/hooks/use-local-storage";
-import { DOCUMENT_TYPES, PAYMENT_METHOD_LABELS } from "@/lib/constants";
-import { formatDate, formatDateTime, formatMoney, fullName, motorcycleLabel } from "@/lib/formatting";
+import { PAYMENT_METHOD_LABELS } from "@/lib/constants";
+import { documentLabel, DOCUMENT_TYPE_OPTIONS } from "@/config/document-requirements";
+import { vehicleTypeLabel } from "@/config/vehicle-types";
+import { formatDate, formatDateTime, formatMoney, fullName, vehicleLabel } from "@/lib/formatting";
 import { registrationService } from "@/services/registration.service";
 import { ownerService } from "@/services/owner.service";
-import { motorcycleService } from "@/services/motorcycle.service";
+import { vehicleService } from "@/services/vehicle.service";
 import { paymentService } from "@/services/payment.service";
 import { PageHeader, Tabs } from "@/components/ui/layout-bits";
 import { Field, Input, Select } from "@/components/ui/form";
@@ -19,14 +21,14 @@ import { ErrorState, PageSkeleton } from "@/components/ui/feedback";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { DataTable, MobileCard, type ColumnDef } from "@/components/ui/data-table";
 import { PlateChip } from "@/components/registry/renewal";
-import type { ApplicationDocument, DocumentStatus, DocumentType, Motorcycle, Owner, Payment, RegistrationApplication } from "@/types";
+import type { ApplicationDocument, DocumentStatus, DocumentType, Owner, Payment, RegistrationApplication, Vehicle } from "@/types";
 
 type TabKey = "uploaded" | "certificates" | "receipts";
 type DocRow = { doc: ApplicationDocument; app: RegistrationApplication; owner: Owner | undefined };
-type CertRow = { app: RegistrationApplication; owner: Owner | undefined; moto: Motorcycle | undefined };
+type CertRow = { app: RegistrationApplication; owner: Owner | undefined; vehicle: Vehicle | undefined };
 type ReceiptRow = { payment: Payment; app: RegistrationApplication | undefined; owner: Owner | undefined };
 
-const typeLabel = (t: DocumentType) => DOCUMENT_TYPES.find((d) => d.type === t)?.label ?? t;
+const typeLabel = (t: DocumentType) => documentLabel(t);
 const STATUS_OPTIONS: { value: DocumentStatus; label: string }[] = [
   { value: "uploaded", label: "Uploaded · awaiting review" },
   { value: "verified", label: "Verified" },
@@ -45,19 +47,19 @@ function DocumentsInner() {
   const q = useDebouncedValue(query.trim().toLowerCase(), 250);
 
   const data = useServiceQuery(async () => {
-    const [apps, owners, motos, payments] = await Promise.all([registrationService.list(), ownerService.list(), motorcycleService.list(), paymentService.list({ status: "successful" })]);
-    return { apps, owners, motos, payments };
+    const [apps, owners, vehicles, payments] = await Promise.all([registrationService.list(), ownerService.list(), vehicleService.list(), paymentService.list({ status: "successful" })]);
+    return { apps, owners, vehicles, payments };
   }, []);
 
   const sets = useMemo(() => {
     if (!data.data) return null;
-    const { apps, owners, motos, payments } = data.data;
+    const { apps, owners, vehicles, payments } = data.data;
     const ownerOf = (id?: string) => owners.find((o) => o.id === id);
     const docs: DocRow[] = apps.flatMap((app) => app.documents.filter((d) => d.status !== "missing").map((doc) => ({ doc, app, owner: ownerOf(app.ownerId) })));
     const certs: CertRow[] = apps
       .filter((a) => a.status === "registered" && a.certificateNumber)
       .sort((a, b) => (b.completedAt ?? "").localeCompare(a.completedAt ?? ""))
-      .map((app) => ({ app, owner: ownerOf(app.ownerId), moto: motos.find((m) => m.id === app.motorcycleId) }));
+      .map((app) => ({ app, owner: ownerOf(app.ownerId), vehicle: vehicles.find((m) => m.id === app.vehicleId) }));
     const receipts: ReceiptRow[] = [...payments]
       .sort((a, b) => (b.completedAt ?? b.createdAt).localeCompare(a.completedAt ?? a.createdAt))
       .map((payment) => {
@@ -92,15 +94,16 @@ function DocumentsInner() {
     { id: "status", header: "Status", accessorFn: (r) => r.doc.status, cell: ({ row }) => <StatusBadge kind="document" status={row.original.doc.status} /> },
     { id: "verified", header: "Verified by / at", accessorFn: (r) => r.doc.verifiedAt ?? "", cell: ({ row }) => (row.original.doc.verifiedBy ? <span className="flex flex-col"><span>{row.original.doc.verifiedBy}</span><span className="mut mono text-[12px]">{formatDateTime(row.original.doc.verifiedAt)}</span></span> : "—") },
     { id: "reason", header: "Rejection reason", accessorFn: (r) => r.doc.rejectionReason ?? "", cell: ({ row }) => (row.original.doc.rejectionReason ? <span className="text-[#a3111a]">{row.original.doc.rejectionReason}</span> : "—") },
-    { id: "action", header: "Action", enableSorting: false, cell: ({ row }) => <Link href={`/registrations/${row.original.app.id}?step=3`} className="btn btn-s btn-sm" aria-label={`Review ${typeLabel(row.original.doc.type)} for ${row.original.app.transactionNumber}`}>Review</Link> },
+    { id: "action", header: "Action", enableSorting: false, cell: ({ row }) => <Link href={`/registrations/new?id=${row.original.app.id}&step=5`} className="btn btn-s btn-sm" aria-label={`Review ${typeLabel(row.original.doc.type)} for ${row.original.app.transactionNumber}`}>Review</Link> },
   ];
 
   const certCols: ColumnDef<CertRow, unknown>[] = [
     { id: "cert", header: "Certificate No.", accessorFn: (r) => r.app.certificateNumber ?? "", cell: ({ row }) => <span className="mono font-semibold">{row.original.app.certificateNumber}</span> },
     { id: "reg", header: "Registration No.", accessorFn: (r) => r.app.registrationNumber ?? "", cell: ({ row }) => <Link href={`/registrations/${row.original.app.id}`} className="mono">{row.original.app.registrationNumber ?? "—"}</Link> },
-    { id: "plate", header: "Plate", accessorFn: (r) => r.app.plateNumber ?? "", cell: ({ row }) => <PlateChip plate={row.original.app.plateNumber ?? row.original.moto?.plateNumber} size="sm" /> },
+    { id: "plate", header: "Plate", accessorFn: (r) => r.app.plateNumber ?? "", cell: ({ row }) => <PlateChip plate={row.original.app.plateNumber ?? row.original.vehicle?.plateNumber} size="sm" /> },
     { id: "owner", header: "Owner", accessorFn: (r) => fullName(r.owner) },
-    { id: "moto", header: "Motorcycle", accessorFn: (r) => motorcycleLabel(r.moto) },
+    { id: "vehicle", header: "Vehicle", accessorFn: (r) => vehicleLabel(r.vehicle) },
+    { id: "vtype", header: "Vehicle type", accessorFn: (r) => vehicleTypeLabel(r.vehicle?.vehicleType) },
     { id: "valid", header: "Valid to", accessorFn: (r) => r.app.expiryDate ?? "", cell: ({ row }) => <span className="mono">{formatDate(row.original.app.expiryDate)}</span> },
     { id: "print", header: "Print", enableSorting: false, cell: ({ row }) => (
       <div className="flex flex-wrap gap-1.5">
@@ -150,7 +153,7 @@ function DocumentsInner() {
                 <Select id="doc-status" value={status} onChange={(e) => setStatus(e.target.value)} placeholder="All statuses" options={STATUS_OPTIONS} />
               </Field>
               <Field label="Document type" htmlFor="doc-type">
-                <Select id="doc-type" value={type} onChange={(e) => setType(e.target.value)} placeholder="All types" options={DOCUMENT_TYPES.map((d) => ({ value: d.type, label: d.label }))} />
+                <Select id="doc-type" value={type} onChange={(e) => setType(e.target.value)} placeholder="All types" options={DOCUMENT_TYPE_OPTIONS} />
               </Field>
             </>
           )}
@@ -161,7 +164,7 @@ function DocumentsInner() {
       {tab === "uploaded" && (
         <DataTable storageKey="documents" data={docs} loading={data.loading} columns={docCols}
           mobileCard={(r) => (
-            <MobileCard href={`/registrations/${r.app.id}?step=3`} title={r.app.transactionNumber} badge={<StatusBadge kind="document" status={r.doc.status} />}
+            <MobileCard href={`/registrations/new?id=${r.app.id}&step=5`} title={r.app.transactionNumber} badge={<StatusBadge kind="document" status={r.doc.status} />}
               lines={[typeLabel(r.doc.type), `${fullName(r.owner)} · ${r.doc.file?.name ?? "—"}`]}
               footer={r.doc.rejectionReason ? <span className="text-[12px] text-[#a3111a]">Rejected: {r.doc.rejectionReason}</span> : r.doc.verifiedBy ? <span className="mut text-[12px]">Verified by {r.doc.verifiedBy} · {formatDate(r.doc.verifiedAt)}</span> : <span className="text-[12px] font-semibold text-[#1515e8]">Review</span>} />
           )}
@@ -172,16 +175,16 @@ function DocumentsInner() {
         <DataTable storageKey="documents-certs" data={certs} loading={data.loading} columns={certCols}
           mobileCard={(r) => (
             <div className="card flex flex-col gap-2 p-3.5">
-              <div className="flex items-center justify-between gap-2"><span className="mono text-[12.5px] font-semibold">{r.app.certificateNumber}</span><PlateChip plate={r.app.plateNumber ?? r.moto?.plateNumber} size="sm" /></div>
+              <div className="flex items-center justify-between gap-2"><span className="mono text-[12.5px] font-semibold">{r.app.certificateNumber}</span><PlateChip plate={r.app.plateNumber ?? r.vehicle?.plateNumber} size="sm" /></div>
               <Link href={`/registrations/${r.app.id}`} className="text-[15px] font-bold text-[#0b0b0f]">{fullName(r.owner)}</Link>
-              <p className="mut m-0 text-[13px]">{motorcycleLabel(r.moto)} · valid to {formatDate(r.app.expiryDate)}</p>
+              <p className="mut m-0 text-[13px]">{vehicleLabel(r.vehicle)} · valid to {formatDate(r.app.expiryDate)}</p>
               <div className="flex gap-2 border-t border-[#edeff3] pt-2.5">
                 <Link href={`/registrations/${r.app.id}?print=certificate`} className="btn btn-s btn-sm min-h-[44px] flex-1">Certificate</Link>
                 <Link href={`/registrations/${r.app.id}?print=label`} className="btn btn-s btn-sm min-h-[44px] flex-1">Label</Link>
               </div>
             </div>
           )}
-          empty={{ title: "No certificates", message: q ? "No registered applications match your search." : "Certificates and labels become available once a registration is completed." }} />
+          empty={{ title: "No certificates", message: q ? "No registered applications match your search." : "Certificates become available once a transaction is completed." }} />
       )}
 
       {tab === "receipts" && (

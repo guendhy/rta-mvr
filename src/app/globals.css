@@ -1,7 +1,7 @@
 @import "tailwindcss";
 
 /*
- * RTA design system — ported from the "PNG RTA Motorcycle Registration & Payment System"
+ * RTA design system — ported from the "PNG RTA Motor Vehicle Registration & Payment System"
  * design canvas. Class names (btn, card, badge, inp, tbl …) match the design so screens
  * stay faithful to it; Tailwind utilities handle one-off layout.
  */
@@ -71,6 +71,9 @@
   .s-ok { background: #dff3e7; color: #0d6630; }
   .s-bad { background: #fce4e5; color: #a3111a; }
   .s-susp { background: #5c0a0f; color: #fff; }
+  .s-soon { background: #fff0b3; color: #5c4400; }
+  .s-can { background: #e1e4ea; color: #2b2f38; }
+  .s-appr { background: #dcdcfc; color: #10107a; }
 
   .lbl { display: block; font-size: 13px; font-weight: 600; line-height: 1.3; color: #1f2229; margin-bottom: 6px; }
   .req { color: #c4141b; margin-left: 2px; }
@@ -136,6 +139,11 @@
   .kpi { font-size: 30px; font-weight: 800; letter-spacing: -.02em; line-height: 1.1; font-variant-numeric: tabular-nums; margin: 0; }
   .opt { display: flex; gap: 12px; align-items: center; min-height: 52px; padding: 12px 14px; border: 1px solid #c9ced8; border-radius: 10px; background: #fff; cursor: pointer; font-size: 14px; font-weight: 600; text-align: left; font-family: inherit; color: inherit; }
   .opt-on { border: 2px solid #1515e8; background: #f5f5ff; padding: 11px 13px; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; min-height: 40px; padding: 0 14px; border: 1px solid #c9ced8; border-radius: 999px; background: #fff; font-family: inherit; font-size: 13.5px; font-weight: 600; color: #1f2229; cursor: pointer; }
+  .chip:hover { border-color: #1515e8; }
+  .chip:focus-visible { outline: 3px solid #b9b9fa; outline-offset: 1px; }
+  .chip-on, .chip-on:hover { background: #1515e8; border-color: #1515e8; color: #fff; }
+  .condhd { display: flex; gap: 8px; align-items: flex-start; padding: 10px 12px; border-radius: 8px; background: #f5f5ff; color: #10107a; font-size: 13px; }
   .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
   .pf { display: flex; gap: 4px; }
   .pf button { min-width: 58px; min-height: 36px; border: 1px solid #c9ced8; background: #fff; border-radius: 6px; font-family: inherit; font-size: 12.5px; font-weight: 700; color: #3a3f4a; cursor: pointer; }

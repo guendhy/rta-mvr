@@ -6,6 +6,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { toast } from "sonner";
 import { Building2, Pencil, PlugZap, Plus, Power, PowerOff, UserCheck } from "lucide-react";
+import { useDemoUser } from "@/hooks/use-demo-user";
 import { useAction, useServiceQuery } from "@/hooks/use-service";
 import { TERMINAL_ADMIN_STATUS } from "@/lib/constants";
 import { friendlyError } from "@/lib/errors";
@@ -19,7 +20,7 @@ import { Field, Input, Select } from "@/components/ui/form";
 import { ConfirmDialog, Modal } from "@/components/ui/modal";
 import { DataTable, MobileCard, type ColumnDef } from "@/components/ui/data-table";
 import { ErrorState } from "@/components/ui/feedback";
-import { StatusBadge } from "@/components/ui/status-badge";
+import { Badge, StatusBadge } from "@/components/ui/status-badge";
 import { FilterBar, FilterSelect, FormFooter, ResultCount, SearchField } from "@/components/admin/admin-bits";
 
 const STATUSES = Object.entries(TERMINAL_ADMIN_STATUS).map(([value, s]) => ({ value, label: s.label }));
@@ -110,6 +111,8 @@ function AssignModal({ terminal, kind, ctx, onDone }: { terminal: PosTerminal; k
 }
 
 export default function TerminalsPage() {
+  const { can } = useDemoUser();
+  const canEdit = can("terminals.manage");
   const terminals = useServiceQuery(() => posService.listTerminals(), []);
   const ctxQ = useServiceQuery(async (): Promise<Ctx> => {
     const [offices, users] = await Promise.all([settingsService.listOffices(), userService.list()]);
@@ -151,13 +154,13 @@ export default function TerminalsPage() {
     const label = (s: string) => (compact ? <span className="sr">{s}</span> : s);
     return (
       <div className="flex flex-wrap gap-1.5">
-        <button type="button" className={cls} onClick={() => setEditing(t)} aria-label={`Edit ${t.terminalId}`} title="Edit"><Pencil size={15} aria-hidden="true" />{label("Edit")}</button>
-        <button type="button" className={cls} onClick={() => setAssigning({ t, kind: "office" })} aria-label={`Assign office to ${t.terminalId}`} title="Assign office"><Building2 size={15} aria-hidden="true" />{label("Office")}</button>
-        <button type="button" className={cls} onClick={() => setAssigning({ t, kind: "cashier" })} aria-label={`Assign cashier to ${t.terminalId}`} title="Assign cashier"><UserCheck size={15} aria-hidden="true" />{label("Cashier")}</button>
+        {canEdit && <button type="button" className={cls} onClick={() => setEditing(t)} aria-label={`Edit ${t.terminalId}`} title="Edit"><Pencil size={15} aria-hidden="true" />{label("Edit")}</button>}
+        {canEdit && <button type="button" className={cls} onClick={() => setAssigning({ t, kind: "office" })} aria-label={`Assign office to ${t.terminalId}`} title="Assign office"><Building2 size={15} aria-hidden="true" />{label("Office")}</button>}
+        {canEdit && <button type="button" className={cls} onClick={() => setAssigning({ t, kind: "cashier" })} aria-label={`Assign cashier to ${t.terminalId}`} title="Assign cashier"><UserCheck size={15} aria-hidden="true" />{label("Cashier")}</button>}
         <button type="button" className={cls} onClick={() => test(t)} disabled={testing === t.id} aria-label={`Test connection for ${t.terminalId}`} title="Test connection">
           {testing === t.id ? <span className="spin" aria-hidden="true" /> : <PlugZap size={15} aria-hidden="true" />}{label("Test")}
         </button>
-        {t.status === "disabled" ? (
+        {!canEdit ? null : t.status === "disabled" ? (
           <button type="button" className={cls} onClick={() => setToggling(t)} aria-label={`Enable ${t.terminalId}`} title="Enable"><Power size={15} aria-hidden="true" />{label("Enable")}</button>
         ) : (
           <button type="button" className={cls.replace("btn-s", "btn-do")} onClick={() => setToggling(t)} aria-label={`Disable ${t.terminalId}`} title="Disable"><PowerOff size={15} aria-hidden="true" />{label("Disable")}</button>
@@ -182,7 +185,22 @@ export default function TerminalsPage() {
   const error = terminals.error ?? ctxQ.error;
   return (
     <div className="flex flex-col gap-6">
-      <PageHeader eyebrow="Administration" title="POS Terminals" description="Card terminals used by cashiers. Test a terminal before assigning it to a counter." actions={<button type="button" className="btn btn-p" onClick={() => setEditing("new")} disabled={!ctx}><Plus size={18} aria-hidden="true" />Add Terminal</button>} />
+      <PageHeader eyebrow="Administration" title="POS Terminals" description="Vendor-neutral card terminal fleet used by cashiers. Every terminal reports through the payment terminal adapter — test a terminal before assigning it to a counter." actions={canEdit ? <button type="button" className="btn btn-p" onClick={() => setEditing("new")} disabled={!ctx}><Plus size={18} aria-hidden="true" />Add Terminal</button> : undefined} />
+      {terminals.data && terminals.data.length > 0 && (
+        <ul className="m-0 flex list-none flex-wrap gap-2 p-0" aria-label="Terminals by status">
+          {STATUSES.map((s) => {
+            const n = terminals.data!.filter((t) => t.status === s.value).length;
+            return (
+              <li key={s.value}>
+                <button type="button" className={`btn btn-s btn-sm ${status === s.value ? "!border-[#1515e8] !bg-[#f5f5ff]" : ""}`} aria-pressed={status === s.value} onClick={() => setStatus(status === s.value ? "" : s.value)}>
+                  <Badge tone={TERMINAL_ADMIN_STATUS[s.value as keyof typeof TERMINAL_ADMIN_STATUS].tone}>{s.label}</Badge>
+                  <span className="font-bold">{n}</span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
       <FilterBar>
         <SearchField id="term-q" value={q} onChange={setQ} placeholder="Name, Terminal ID, Merchant ID or serial" />
         <FilterSelect id="term-office" label="Office" value={office} onChange={setOffice} options={(ctx?.offices ?? []).map((o) => ({ value: o.id, label: o.name }))} all="All offices" />
@@ -207,13 +225,13 @@ export default function TerminalsPage() {
                 footer={actions(t, false)}
               />
             )}
-            empty={{ title: "No POS terminals found", message: q || office || status ? "No terminals match the current filters." : "Add a POS terminal to start taking card payments.", action: { label: "Add Terminal", onClick: () => setEditing("new") } }}
+            empty={{ title: "No POS terminals found", message: q || office || status ? "No terminals match the current filters." : "Add a POS terminal to start taking card payments.", action: canEdit ? { label: "Add Terminal", onClick: () => setEditing("new") } : undefined }}
           />
         </>
       )}
 
-      {editing && ctx && <TerminalForm key={editing === "new" ? "new" : editing.id} terminal={editing === "new" ? null : editing} ctx={ctx} onDone={() => setEditing(null)} />}
-      {assigning && ctx && <AssignModal key={`${assigning.t.id}-${assigning.kind}`} terminal={assigning.t} kind={assigning.kind} ctx={ctx} onDone={() => setAssigning(null)} />}
+      {editing && canEdit && ctx && <TerminalForm key={editing === "new" ? "new" : editing.id} terminal={editing === "new" ? null : editing} ctx={ctx} onDone={() => setEditing(null)} />}
+      {assigning && canEdit && ctx && <AssignModal key={`${assigning.t.id}-${assigning.kind}`} terminal={assigning.t} kind={assigning.kind} ctx={ctx} onDone={() => setAssigning(null)} />}
 
       <ConfirmDialog
         open={!!toggling}

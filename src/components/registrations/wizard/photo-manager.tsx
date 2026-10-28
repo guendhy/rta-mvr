@@ -9,8 +9,8 @@ import { toFileMeta } from "@/components/ui/file-upload";
 import { Modal } from "@/components/ui/modal";
 import type { FileMeta, PhotoSlot } from "@/types";
 
-/** Six motorcycle photo slots. Images stay in the browser (object URLs); only metadata is saved. */
-export function PhotoManager({ scope, photos, onChange, readOnly }: { scope: string; photos: Partial<Record<PhotoSlot, FileMeta>>; onChange: (p: Partial<Record<PhotoSlot, FileMeta>>) => void; readOnly?: boolean }) {
+/** Vehicle photo slots (engine-number slot only for vehicles with an engine). Images stay in the browser (object URLs); only metadata is saved. */
+export function PhotoManager({ scope, photos, onChange, readOnly, hasEngine = true }: { scope: string; photos: Partial<Record<PhotoSlot, FileMeta>>; onChange: (p: Partial<Record<PhotoSlot, FileMeta>>) => void; readOnly?: boolean; hasEngine?: boolean }) {
   const [preview, setPreview] = useState<{ slot: PhotoSlot; url: string | null } | null>(null);
   const [, force] = useState(0);
   const key = (s: PhotoSlot) => `${scope}:photo:${s}`;
@@ -25,7 +25,7 @@ export function PhotoManager({ scope, photos, onChange, readOnly }: { scope: str
 
   return (
     <div className="g3">
-      {PHOTO_SLOTS.map(({ slot, label }) => {
+      {PHOTO_SLOTS.filter((p) => hasEngine || !p.engineOnly).map(({ slot, label }) => {
         const meta = photos[slot];
         const local = previewStore.get(key(slot));
         const inputId = `${scope}-${slot}`;
@@ -69,7 +69,7 @@ export function PhotoManager({ scope, photos, onChange, readOnly }: { scope: str
       <Modal open={!!preview} onClose={() => setPreview(null)} title={`Photo — ${PHOTO_SLOTS.find((p) => p.slot === preview?.slot)?.label ?? ""}`} size="lg">
         {preview?.url ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={preview.url} alt="Motorcycle photo" className="max-h-[70vh] w-full rounded-md object-contain" />
+          <img src={preview.url} alt="Vehicle photo" className="max-h-[70vh] w-full rounded-md object-contain" />
         ) : (
           <p className="mut text-[14px]">Preview is not available after a page refresh — this prototype keeps images only in the current browser session. The file details are saved.</p>
         )}

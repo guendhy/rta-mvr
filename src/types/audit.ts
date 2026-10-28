@@ -4,7 +4,7 @@ import type { RoleKey } from "./user";
 export type AuditAction =
   | "login" | "logout" | "role_switched"
   | "registration_created" | "registration_updated" | "registration_submitted" | "registration_cancelled"
-  | "owner_created" | "motorcycle_created"
+  | "owner_created" | "vehicle_created" | "vehicle_updated" | "ownership_transferred" | "vehicle_status_changed"
   | "document_uploaded" | "document_verified" | "document_rejected"
   | "inspection_submitted" | "inspection_scheduled"
   | "insurance_verified" | "insurance_flagged"
@@ -14,7 +14,7 @@ export type AuditAction =
   | "plate_assigned" | "plate_status_changed" | "plates_received"
   | "certificate_printed" | "receipt_printed" | "label_printed"
   | "renewal_created"
-  | "fee_changed" | "settings_changed" | "permissions_changed"
+  | "fee_changed" | "requirement_changed" | "settings_changed" | "permissions_changed"
   | "user_created" | "user_updated" | "user_status_changed"
   | "office_saved" | "terminal_saved" | "center_saved"
   | "demo_reset";

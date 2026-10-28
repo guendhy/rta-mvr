@@ -1,4 +1,5 @@
 import { createSeedDb } from "@/data/mock/seed";
+import { migrateLegacyStorage } from "./migrate";
 import type { MockDb } from "@/data/mock/builder";
 import { auditEvent } from "@/data/mock/audit-logs";
 import { DEFAULT_POS_STATE, DEFAULT_SIMULATION } from "@/data/mock/settings";
@@ -22,7 +23,8 @@ import type {
 /** Collections persisted under their own localStorage key. */
 export type CollectionKey = keyof MockDb;
 
-const SEED_VERSION = 3;
+/** 4 = motor vehicle model. Version 3 (motorcycle-only) data is migrated, not discarded. */
+const SEED_VERSION = 4;
 
 interface SeedMeta {
   version: number;
@@ -34,6 +36,10 @@ export function ensureSeeded(): void {
   if (typeof window === "undefined") return;
   const meta = mockStorage.get<SeedMeta>(KEYS.seeded);
   if (meta && meta.version === SEED_VERSION) return;
+  if (meta && meta.version === 3 && migrateLegacyStorage()) {
+    mockStorage.set<SeedMeta>(KEYS.seeded, { ...meta, version: SEED_VERSION });
+    return;
+  }
   writeSeed();
 }
 

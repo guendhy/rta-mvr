@@ -12,10 +12,14 @@ export interface AppSettings {
     requirePlateBeforeCompletion: boolean;
     requireInsuranceVerification: boolean;
     requireInspection: boolean;
+    /** Days before expiry a registration counts as "Expiring Soon". */
+    expiringSoonDays: number;
   };
   payments: {
     allowCash: boolean;
     allowPos: boolean;
+    allowCard: boolean;
+    allowQr: boolean;
     allowOnline: boolean;
     allowBankTransfer: boolean;
   };
@@ -51,7 +55,8 @@ export type CounterKey =
   | "certificate"
   | "label"
   | "registration"
-  | "inspectionCertificate";
+  | "inspectionCertificate"
+  | "inspection";
 
 /** Sequence counters keyed by scope (year, day or province+year). */
 export type Counters = Record<CounterKey, Record<string, number>>;

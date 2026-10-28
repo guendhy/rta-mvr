@@ -2,8 +2,9 @@ import type { BaseRecord, ISODate } from "./common";
 import type { ApplicationDocument } from "./document";
 import type { Assessment } from "./fee";
 import type { OwnerInput } from "./owner";
-import type { MotorcycleInput } from "./motorcycle";
+import type { VehicleClassification, VehicleInput } from "./vehicle";
 
+/** Application workflow status (see `src/lib/workflow.ts` for the transition map). */
 export type RegistrationStatus =
   | "draft"
   | "pending"
@@ -20,7 +21,24 @@ export type RegistrationStatus =
   | "rejected"
   | "cancelled";
 
-export type ApplicationType = "new" | "renewal";
+/** Every RTA motor vehicle transaction. Labels and step plans live in `src/config/transaction-types.ts`. */
+export type TransactionType =
+  | "new"
+  | "renewal"
+  | "transfer"
+  | "change_vehicle"
+  | "change_owner"
+  | "replacement_certificate"
+  | "replacement_plate"
+  | "duplicate_certificate"
+  | "reclassification"
+  | "deregistration"
+  | "reinstatement"
+  | "registration_transfer"
+  | "other";
+
+/** @deprecated use TransactionType */
+export type ApplicationType = TransactionType;
 
 export interface StatusHistoryEntry {
   from: RegistrationStatus | null;
@@ -33,7 +51,8 @@ export interface StatusHistoryEntry {
 
 export interface WizardDraft {
   owner?: Partial<OwnerInput>;
-  motorcycle?: Partial<MotorcycleInput>;
+  classification?: Partial<VehicleClassification>;
+  vehicle?: Partial<VehicleInput>;
   ownerMode?: "search" | "existing" | "new";
 }
 
@@ -45,24 +64,51 @@ export interface ApprovalDecision {
   reason?: string;
 }
 
+/** Transfer of ownership — the former owner is kept, never overwritten. */
+export interface TransferDetails {
+  previousOwnerId: string;
+  newOwnerId?: string;
+  saleDate?: string;
+  salePrice?: number;
+  reason: "sale" | "gift" | "inheritance" | "court_order" | "company_restructure" | "other";
+  sellerConsent: boolean;
+}
+
+/** Requested changes for change-of-details, reclassification and registration transfers. */
+export interface ChangeRequest {
+  summary: string;
+  changes: { field: string; label: string; from?: string; to: string }[];
+}
+
 export interface RegistrationApplication extends BaseRecord {
   transactionNumber: string;
-  type: ApplicationType;
+  type: TransactionType;
   status: RegistrationStatus;
   currentStep: number;
   officeId: string;
   createdBy: string;
   createdByName: string;
+  assignedOfficerId?: string;
+  assignedOfficerName?: string;
   ownerId?: string;
-  motorcycleId?: string;
+  vehicleId?: string;
   previousApplicationId?: string;
   draft: WizardDraft;
   documents: ApplicationDocument[];
+  /** Resolved from the transaction / classification rules when the vehicle is known. */
+  inspectionRequired: boolean;
+  insuranceRequired: boolean;
+  /** A new plate is issued on completion. */
+  plateRequired: boolean;
   inspectionId?: string;
   insuranceId?: string;
   assessment?: Assessment;
   paymentId?: string;
   approval?: ApprovalDecision;
+  transfer?: TransferDetails;
+  changeRequest?: ChangeRequest;
+  /** Deregistration / cancellation reason. */
+  closureReason?: string;
   registrationNumber?: string;
   certificateNumber?: string;
   labelNumber?: string;
@@ -80,10 +126,10 @@ export interface RegistrationApplication extends BaseRecord {
 }
 
 export interface CreateRegistrationInput {
-  type: "new" | "renewal";
+  type: TransactionType;
   officeId: string;
   ownerId?: string;
-  motorcycleId?: string;
+  vehicleId?: string;
   previousApplicationId?: string;
 }
 

@@ -4,11 +4,13 @@ import { officeForProvince } from "@/data/mock/offices";
 import { SEED_TERMINALS } from "@/data/mock/terminals";
 import { buildPlates } from "@/data/mock/plates";
 import { DEFAULT_POS_STATE } from "@/data/mock/settings";
-import { MAKES, MOTORCYCLE_COLORS, PROVINCES } from "@/lib/constants";
+import { PROVINCES, VEHICLE_COLORS } from "@/lib/constants";
+import { makesFor, plateCategoryFor } from "@/config/vehicle-usage";
+import { suggestVehicleClass } from "@/config/vehicle-types";
 import { uuid } from "@/lib/generators";
 import { KEYS, mockStorage } from "@/lib/mock-storage";
 import { mockDelay } from "@/lib/mock-delay";
-import type { Motorcycle, NetworkState, Owner, SimulatedErrorKey, SimulationState } from "@/types";
+import type { NetworkState, Owner, SimulatedErrorKey, SimulationState, Vehicle, VehicleSpecifications, VehicleType, VehicleUsage } from "@/types";
 import { audit, getSimulation, read, seedMeta, setPosState, setSimulation, write, writeSeed, type CollectionKey } from "./core";
 
 export type ScenarioKey =
@@ -22,20 +24,27 @@ export type ScenarioKey =
   | "registered"
   | "expired_registration"
   | "returned"
-  | "rejected";
+  | "rejected"
+  | "transfer_for_approval"
+  | "renewal_inspection";
+
+/** Seeded transaction number by sequence (see data/mock/applications.ts). */
+const seq = (n: number) => `RTA-MV-${new Date().getFullYear()}-${String(n).padStart(8, "0")}`;
 
 export const SCENARIOS: { key: ScenarioKey; label: string; seeded: string }[] = [
-  { key: "ready_for_inspection", label: "Ready for Inspection", seeded: "RTA-MC-2026-000021" },
-  { key: "inspection_failed", label: "Inspection Failed", seeded: "RTA-MC-2026-000022" },
-  { key: "insurance_expired", label: "Insurance Expired", seeded: "RTA-MC-2026-000023" },
-  { key: "ready_for_payment", label: "Ready for Payment", seeded: "RTA-MC-2026-000024" },
-  { key: "payment_declined", label: "Payment Declined", seeded: "RTA-MC-2026-000026" },
-  { key: "ready_for_approval", label: "Ready for Approval", seeded: "RTA-MC-2026-000025" },
-  { key: "awaiting_plate", label: "Awaiting Plate", seeded: "RTA-MC-2026-000027" },
-  { key: "registered", label: "Registered", seeded: "RTA-MC-2026-000015" },
-  { key: "expired_registration", label: "Expired Registration", seeded: "RTA-MC-2026-000005" },
-  { key: "returned", label: "Returned", seeded: "RTA-MC-2026-000029" },
-  { key: "rejected", label: "Rejected", seeded: "RTA-MC-2026-000030" },
+  { key: "ready_for_inspection", label: "Ready for Inspection", seeded: seq(27) },
+  { key: "inspection_failed", label: "Inspection Failed", seeded: seq(28) },
+  { key: "insurance_expired", label: "Insurance Expired", seeded: seq(29) },
+  { key: "ready_for_payment", label: "Ready for Payment", seeded: seq(30) },
+  { key: "payment_declined", label: "Payment Declined", seeded: seq(31) },
+  { key: "ready_for_approval", label: "Ready for Approval", seeded: seq(32) },
+  { key: "awaiting_plate", label: "Awaiting Plate", seeded: seq(33) },
+  { key: "registered", label: "Registered", seeded: seq(23) },
+  { key: "expired_registration", label: "Expired Registration", seeded: seq(5) },
+  { key: "returned", label: "Returned", seeded: seq(34) },
+  { key: "rejected", label: "Rejected", seeded: seq(35) },
+  { key: "transfer_for_approval", label: "Transfer Awaiting Approval", seeded: seq(36) },
+  { key: "renewal_inspection", label: "PMV Renewal Needs Inspection", seeded: seq(37) },
 ];
 
 const FIRST = ["Jacob", "Miriam", "Tony", "Lucy", "Andrew", "Betty", "Gabriel", "Naomi", "Clement", "Veronica", "Elijah", "Judith"];
@@ -43,44 +52,58 @@ const LAST = ["Kapi", "Toliman", "Wani", "Gorua", "Pokana", "Sinai", "Ulka", "Ha
 const pick = <T,>(arr: T[]) => arr[Math.floor(Math.random() * arr.length)];
 const rnd = (n: number) => Math.floor(Math.random() * n);
 const VIN_CHARS = "ABCDEFGHJKLMNPRSTUVWXYZ0123456789";
+const DB_KEYS: CollectionKey[] = ["users", "permissions", "owners", "vehicles", "applications", "inspections", "insurance", "feeRules", "documentRules", "payments", "plates", "audit", "notifications", "terminals", "offices", "centers", "settings", "counters"];
 
 function loadDb(): MockDb {
-  const keys: CollectionKey[] = ["users", "permissions", "owners", "motorcycles", "applications", "inspections", "insurance", "fees", "payments", "plates", "audit", "notifications", "terminals", "offices", "centers", "settings", "counters"];
-  return Object.fromEntries(keys.map((k) => [k, read(k)])) as unknown as MockDb;
+  return Object.fromEntries(DB_KEYS.map((k) => [k, read(k)])) as unknown as MockDb;
 }
 
 function saveDb(db: MockDb, keys: CollectionKey[]) {
   for (const k of keys) write(k, db[k] as never);
 }
 
-function randomOwnerAndMoto(db: MockDb, sidecar = false): { owner: Owner; moto: Motorcycle } {
+/** Random demo vehicle types — a spread across groups. */
+const DEMO_TYPES: { type: VehicleType; usage: VehicleUsage; specs: VehicleSpecifications; body: string }[] = [
+  { type: "pickup", usage: "private", specs: { engineCapacityCc: 2393, grossVehicleMassKg: 2910, tareWeightKg: 2000, seatingCapacity: 5, axleCount: 2 }, body: "Double cab utility" },
+  { type: "sedan", usage: "private", specs: { engineCapacityCc: 1798, grossVehicleMassKg: 1750, seatingCapacity: 5 }, body: "Sedan" },
+  { type: "suv", usage: "private", specs: { engineCapacityCc: 2755, grossVehicleMassKg: 2990, seatingCapacity: 7 }, body: "4WD Wagon" },
+  { type: "motorcycle", usage: "private", specs: { engineCapacityCc: 149, wheelCount: 2, motorcycleCategory: "Standard", sidecar: false }, body: "Standard" },
+  { type: "pmv", usage: "pmv", specs: { seatingCapacity: 26, grossVehicleMassKg: 5100, axleCount: 2, emergencyExits: 1, routePermitNumber: "PMV-NCD-2026-0999" }, body: "Bus" },
+  { type: "truck", usage: "commercial", specs: { grossVehicleMassKg: 16000, tareWeightKg: 7000, axleCount: 2, trailerCoupling: "None" }, body: "Tray" },
+  { type: "van", usage: "commercial", specs: { engineCapacityCc: 2755, grossVehicleMassKg: 3300, seatingCapacity: 3 }, body: "Panel van" },
+];
+
+function randomOwnerAndVehicle(db: MockDb): { owner: Owner; vehicle: Vehicle } {
   const province = pick(PROVINCES);
   const district = province.districts[0];
   const first = pick(FIRST);
   const last = pick(LAST);
   const ts = new Date().toISOString();
   const owner: Owner = {
-    id: uuid(), firstName: first, lastName: last, dateOfBirth: `19${70 + rnd(28)}-0${1 + rnd(8)}-1${rnd(9)}`, gender: rnd(2) ? "male" : "female",
+    id: uuid(), ownershipType: "individual", firstName: first, lastName: last, dateOfBirth: `19${70 + rnd(28)}-0${1 + rnd(8)}-1${rnd(9)}`, gender: rnd(2) ? "male" : "female",
     nationality: "Papua New Guinean", identificationType: "national_id", identificationNumber: `NID-${1900 + rnd(99)}-${100000 + rnd(899999)}`,
     mobile: `+675 7${rnd(9)}${rnd(9)}${rnd(9)} ${1000 + rnd(8999)}`, email: `${first}.${last}@example.com`.toLowerCase(), province: province.name, district,
     llg: `${district} Urban LLG`, ward: `Ward ${1 + rnd(9)}`, street: `Section ${1 + rnd(60)}, Lot ${1 + rnd(40)}`, createdAt: ts, updatedAt: ts,
   };
-  const make = pick(Object.keys(MAKES));
-  const model = pick(MAKES[make]);
+  const demo = pick(DEMO_TYPES);
+  const makes = makesFor(demo.type);
+  const make = pick(Object.keys(makes));
+  const model = pick(makes[make]);
   const serial = String(1000000 + rnd(8999999));
   const vin = Array.from({ length: 17 }, () => VIN_CHARS[rnd(VIN_CHARS.length)]).join("");
-  const moto: Motorcycle = {
-    id: uuid(), ownerId: owner.id, make, model, variant: "Standard", year: 2020 + rnd(6), bodyType: sidecar ? "Tricycle (Sidecar)" : "Standard",
-    color: pick(MOTORCYCLE_COLORS), engineNumber: `ENG-${serial}`, chassisNumber: `CH-${serial}`, vin, engineCapacityCc: pick([110, 125, 150, 180, 200]),
-    fuelType: "petrol", countryOfManufacture: pick(["Japan", "Thailand", "India", "China"]), importStatus: "new_import", intendedUse: rnd(3) ? "private" : "commercial",
-    sidecar, provinceOfOperation: province.name, officeId: officeForProvince(province.name), photos: {}, registrationStatus: "unregistered", createdAt: ts, updatedAt: ts,
+  const vehicle: Vehicle = {
+    id: uuid(), ownerId: owner.id, vehicleType: demo.type, vehicleClass: suggestVehicleClass(demo.type, demo.specs), vehicleUsage: demo.usage, bodyType: demo.body,
+    make, model, variant: "Standard", year: 2020 + rnd(6), color: pick(VEHICLE_COLORS), engineNumber: `ENG-${serial}`, chassisNumber: `CH-${serial}`, vin,
+    fuelType: demo.type === "motorcycle" ? "petrol" : "diesel", transmission: "manual", countryOfManufacture: pick(["Japan", "Thailand", "India", "China"]), importStatus: "new_import",
+    provinceOfOperation: province.name, officeId: officeForProvince(province.name), specifications: demo.specs, photos: {}, registrationStatus: "unregistered",
+    plateCategory: plateCategoryFor(demo.type, demo.usage), ownershipHistory: [], createdAt: ts, updatedAt: ts,
   };
   db.owners.unshift(owner);
-  db.motorcycles.push(moto);
-  return { owner, moto };
+  db.vehicles.push(vehicle);
+  return { owner, vehicle };
 }
 
-function specFor(key: ScenarioKey): Omit<ApplicationSpec, "moto"> {
+function specFor(key: ScenarioKey): Omit<ApplicationSpec, "vehicle"> {
   switch (key) {
     case "ready_for_inspection": return { type: "new", target: "for_inspection", daysAgo: 0.05 };
     case "inspection_failed": return { type: "new", target: "inspection_failed", daysAgo: 0.05 };
@@ -93,6 +116,9 @@ function specFor(key: ScenarioKey): Omit<ApplicationSpec, "moto"> {
     case "expired_registration": return { type: "new", target: "registered", daysAgo: 380, method: "pos" };
     case "returned": return { type: "new", target: "returned", daysAgo: 0.1, method: "pos", reason: "Proof of ownership is illegible — upload a clearer copy." };
     case "rejected": return { type: "new", target: "rejected", daysAgo: 0.1, method: "cash", reason: "Chassis number tampering suspected. Referred to RTA Compliance." };
+    case "transfer_for_approval":
+    case "renewal_inspection":
+      return { type: "new", target: "registered", daysAgo: 0.05, method: "pos" };
   }
 }
 
@@ -119,17 +145,25 @@ export class MockDemoService {
     setSimulation({ armedErrors: getSimulation().armedErrors.filter((k) => k !== key) });
   }
 
-  /** Creates a brand-new owner, motorcycle and application in the requested state. */
+  /** Creates a brand-new owner, vehicle and application in the requested state. */
   async loadScenario(key: ScenarioKey): Promise<string> {
     await mockDelay(400, 800);
     const db = loadDb();
-    const { moto } = randomOwnerAndMoto(db, key === "ready_for_payment" && Math.random() < 0.3);
+    randomOwnerAndVehicle(db);
     const spec = specFor(key);
     const now = new Date();
-    const app = buildApplication(db, { ...spec, moto: db.motorcycles.length - 1, at: new Date(now.getTime() - spec.daysAgo * 86_400_000), scenario: `Demo scenario — ${SCENARIOS.find((s) => s.key === key)?.label}` }, now);
+    const vehicle = db.vehicles.length - 1;
+    const label = `Demo scenario — ${SCENARIOS.find((s) => s.key === key)?.label}`;
+    let app = buildApplication(db, { ...spec, vehicle, at: new Date(now.getTime() - spec.daysAgo * 86_400_000), scenario: label }, now);
+    if (key === "transfer_for_approval") {
+      const buyer = db.owners.findIndex((o) => o.id !== db.vehicles[vehicle].ownerId);
+      app = buildApplication(db, { vehicle, type: "transfer", target: "for_approval", daysAgo: 0.01, newOwner: buyer, method: "pos", previousApplicationId: app.id, at: new Date(now.getTime() - 0.01 * 86_400_000), scenario: label }, now);
+    }
+    if (key === "renewal_inspection") {
+      app = buildApplication(db, { vehicle, type: "renewal", target: "for_inspection", daysAgo: 0.01, previousApplicationId: app.id, at: new Date(now.getTime() - 0.01 * 86_400_000), scenario: label }, now);
+    }
     db.audit.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
-    saveDb(db, ["owners", "motorcycles", "applications", "inspections", "insurance", "payments", "plates", "audit", "counters"]);
-    void moto;
+    saveDb(db, ["owners", "vehicles", "applications", "inspections", "insurance", "payments", "plates", "audit", "counters"]);
     return app.id;
   }
 
@@ -185,7 +219,7 @@ export class MockDemoService {
     const apps = read("applications");
     for (const p of fresh) {
       const holder = apps.find((a) => a.plateNumber === p.plateNumber && a.status === "registered");
-      if (holder) Object.assign(p, { status: "assigned", applicationId: holder.id, motorcycleId: holder.motorcycleId, assignedDate: holder.completedAt });
+      if (holder) Object.assign(p, { status: "assigned", applicationId: holder.id, vehicleId: holder.vehicleId, assignedDate: holder.completedAt });
     }
     const extra = read("plates").filter((p) => !fresh.some((f) => f.plateNumber === p.plateNumber) && p.status === "assigned");
     write("plates", [...fresh, ...extra]);

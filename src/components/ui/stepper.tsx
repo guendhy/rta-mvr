@@ -3,8 +3,8 @@
 import { Check } from "lucide-react";
 import { WIZARD_STEPS } from "@/lib/constants";
 
-/** Registration stepper. Desktop shows all 8 steps; small screens show "Step n of 8". */
-export function Stepper({ current, maxReachable, completedThrough, onSelect }: { current: number; maxReachable: number; completedThrough: number; onSelect?: (n: number) => void }) {
+/** Transaction stepper. Desktop shows every step; small screens show "Step n of N". `skipped` steps are marked "Not required". */
+export function Stepper({ current, maxReachable, completedThrough, onSelect, skipped = [] }: { current: number; maxReachable: number; completedThrough: number; onSelect?: (n: number) => void; skipped?: number[] }) {
   const step = WIZARD_STEPS[current - 1];
   return (
     <nav aria-label="Registration progress" className="no-print">
@@ -20,9 +20,10 @@ export function Stepper({ current, maxReachable, completedThrough, onSelect }: {
         </div>
       </div>
       <div className="card hidden overflow-x-auto px-[18px] py-4 md:block">
-        <ol className="m-0 grid min-w-[760px] list-none grid-cols-8 p-0">
+        <ol className="m-0 grid min-w-[980px] list-none p-0" style={{ gridTemplateColumns: `repeat(${WIZARD_STEPS.length}, minmax(0, 1fr))` }}>
           {WIZARD_STEPS.map((s) => {
             const done = s.n <= completedThrough && s.n !== current;
+            const skip = skipped.includes(s.n);
             const isCurrent = s.n === current;
             const reachable = s.n <= maxReachable;
             const bg = done ? "#137a3b" : isCurrent ? "#1515e8" : "#fff";
@@ -41,11 +42,12 @@ export function Stepper({ current, maxReachable, completedThrough, onSelect }: {
                   >
                     {done ? <Check size={16} strokeWidth={3} aria-hidden="true" /> : s.n}
                   </button>
-                  <div className="mx-2 h-0.5 flex-1" style={{ background: s.n === 8 ? "transparent" : done ? "#137a3b" : "#e1e4ea" }} />
+                  <div className="mx-2 h-0.5 flex-1" style={{ background: s.n === WIZARD_STEPS.length ? "transparent" : done ? "#137a3b" : "#e1e4ea" }} />
                 </div>
                 <div className="pr-2">
                   <p className="m-0 text-[11px] font-bold uppercase tracking-[.06em] text-[#5a606c]">Step {s.n}</p>
-                  <p className="m-0 mt-0.5 text-[14px]" style={{ fontWeight: isCurrent ? 700 : 600, color: isCurrent ? "#1515e8" : done ? "#0b0b0f" : "#5a606c" }}>{s.label}</p>
+                  <p className="m-0 mt-0.5 text-[13.5px] leading-tight" style={{ fontWeight: isCurrent ? 700 : 600, color: isCurrent ? "#1515e8" : done ? "#0b0b0f" : "#5a606c" }}>{s.label}</p>
+                  {skip && <p className="m-0 mt-0.5 text-[11px] font-semibold text-[#5a606c]">Not required</p>}
                 </div>
               </li>
             );

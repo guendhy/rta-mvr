@@ -1,24 +1,21 @@
-import type {
-  ChecklistCategoryDef,
-  DocumentType,
-  IdentificationType,
-  InspectionStatus,
-  InsuranceStatus,
-  IntendedUse,
-  PaymentMethod,
-  PaymentStatus,
-  PhotoSlot,
-  PlateStatus,
-  Province,
-  RegistrationStatus,
-  RoleKey,
-  TerminalAdminStatus,
-  TerminalStatus,
-  MotorcycleRegistrationStatus,
-  FuelType,
-  ImportStatus,
-  Gender,
-} from "@/types";
+import type { IdentificationType, PhotoSlot, Province, RoleKey, Gender } from "@/types";
+
+export {
+  REGISTRATION_STATUS,
+  VEHICLE_STATUS,
+  INSPECTION_STATUS,
+  INSURANCE_STATUS,
+  PAYMENT_STATUS,
+  PLATE_STATUS,
+  TERMINAL_STATUS,
+  TERMINAL_ADMIN_STATUS,
+  getStatusLabel,
+  getStatusVariant,
+  type BadgeTone,
+} from "@/config/statuses";
+export { PAYMENT_METHOD_LABELS } from "@/config/payment-channels";
+export { FUEL_TYPES, IMPORT_STATUSES, VEHICLE_COLORS, COUNTRIES_OF_MANUFACTURE, VEHICLE_USAGES } from "@/config/vehicle-usage";
+export { FAILURE_REASONS } from "@/config/inspection-checklists";
 
 export const PROVINCES: Province[] = [
   { code: "NCD", name: "National Capital District", districts: ["Moresby North-East", "Moresby North-West", "Moresby South"] },
@@ -56,126 +53,28 @@ export function llgsFor(district: string | undefined): string[] {
 }
 
 export const ROLE_LABELS: Record<RoleKey, string> = {
-  super_admin: "Super Admin",
-  rta_admin: "RTA Admin",
+  super_admin: "Super Administrator",
+  rta_admin: "RTA Administrator",
   registration_officer: "Registration Officer",
-  inspection_officer: "Inspection Officer",
-  cashier: "Cashier",
-  supervisor: "Supervisor",
+  verification_officer: "Verification Officer",
+  inspection_officer: "Vehicle Inspector",
+  cashier: "Cashier / Payment Officer",
+  supervisor: "Supervisor / Approver",
   plate_officer: "Plate Officer",
-  auditor: "Auditor",
+  auditor: "Reporting / Audit User",
 };
 
 export const ROLE_ORDER: RoleKey[] = [
   "super_admin",
   "rta_admin",
   "registration_officer",
+  "verification_officer",
   "inspection_officer",
   "cashier",
   "supervisor",
   "plate_officer",
   "auditor",
 ];
-
-export type BadgeTone = "draft" | "pend" | "insp" | "assess" | "payq" | "ok" | "bad" | "susp";
-
-export const REGISTRATION_STATUS: Record<RegistrationStatus, { label: string; tone: BadgeTone }> = {
-  draft: { label: "Draft", tone: "draft" },
-  pending: { label: "Pending", tone: "pend" },
-  for_inspection: { label: "For Inspection", tone: "insp" },
-  inspection_failed: { label: "Inspection Failed", tone: "bad" },
-  for_insurance_verification: { label: "Insurance Verification", tone: "insp" },
-  for_assessment: { label: "For Assessment", tone: "assess" },
-  payment_required: { label: "Payment Required", tone: "payq" },
-  paid: { label: "Paid", tone: "ok" },
-  for_approval: { label: "For Approval", tone: "insp" },
-  approved: { label: "Approved · Awaiting Plate", tone: "ok" },
-  registered: { label: "Registered", tone: "ok" },
-  returned: { label: "Returned", tone: "payq" },
-  rejected: { label: "Rejected", tone: "bad" },
-  cancelled: { label: "Cancelled", tone: "draft" },
-};
-
-export const MOTORCYCLE_STATUS: Record<MotorcycleRegistrationStatus, { label: string; tone: BadgeTone }> = {
-  unregistered: { label: "Unregistered", tone: "draft" },
-  registered: { label: "Registered", tone: "ok" },
-  expired: { label: "Expired", tone: "bad" },
-  suspended: { label: "Suspended", tone: "susp" },
-  cancelled: { label: "Cancelled", tone: "draft" },
-};
-
-export const INSPECTION_STATUS: Record<InspectionStatus, { label: string; tone: BadgeTone }> = {
-  not_inspected: { label: "Not Inspected", tone: "draft" },
-  scheduled: { label: "Scheduled", tone: "pend" },
-  in_progress: { label: "In Progress", tone: "insp" },
-  passed: { label: "Passed", tone: "ok" },
-  failed: { label: "Failed", tone: "bad" },
-  reinspection_required: { label: "Reinspection Required", tone: "payq" },
-};
-
-export const INSURANCE_STATUS: Record<InsuranceStatus, { label: string; tone: BadgeTone }> = {
-  pending: { label: "Pending", tone: "pend" },
-  verified: { label: "Verified", tone: "ok" },
-  expired: { label: "Expired", tone: "bad" },
-  invalid: { label: "Invalid", tone: "bad" },
-  rejected: { label: "Rejected", tone: "bad" },
-};
-
-export const PAYMENT_STATUS: Record<PaymentStatus, { label: string; tone: BadgeTone }> = {
-  processing: { label: "Processing", tone: "insp" },
-  successful: { label: "Successful", tone: "ok" },
-  declined: { label: "Declined", tone: "bad" },
-  timeout: { label: "Timeout", tone: "payq" },
-  unknown: { label: "Status Unknown", tone: "payq" },
-  failed: { label: "Failed", tone: "bad" },
-  cancelled: { label: "Cancelled", tone: "draft" },
-};
-
-export const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
-  pos: "POS Card",
-  cash: "Cash",
-  online: "Online Payment",
-  bank_transfer: "Bank Transfer",
-};
-
-export const PLATE_STATUS: Record<PlateStatus, { label: string; tone: BadgeTone }> = {
-  available: { label: "Available", tone: "ok" },
-  reserved: { label: "Reserved", tone: "pend" },
-  assigned: { label: "Assigned", tone: "insp" },
-  released: { label: "Released", tone: "draft" },
-  damaged: { label: "Damaged", tone: "payq" },
-  lost: { label: "Lost", tone: "bad" },
-  cancelled: { label: "Cancelled", tone: "draft" },
-};
-
-export const TERMINAL_STATUS: Record<TerminalStatus, { label: string; tone: BadgeTone }> = {
-  connected: { label: "Connected", tone: "ok" },
-  connecting: { label: "Connecting", tone: "insp" },
-  disconnected: { label: "Disconnected", tone: "draft" },
-  offline: { label: "Offline", tone: "bad" },
-  error: { label: "Device Error", tone: "bad" },
-  unsupported: { label: "Unsupported", tone: "draft" },
-  printer_error: { label: "Printer Error", tone: "payq" },
-};
-
-export const TERMINAL_ADMIN_STATUS: Record<TerminalAdminStatus, { label: string; tone: BadgeTone }> = {
-  online: { label: "Online", tone: "ok" },
-  idle: { label: "Idle", tone: "pend" },
-  offline: { label: "Offline", tone: "bad" },
-  maintenance: { label: "Maintenance", tone: "payq" },
-  disabled: { label: "Disabled", tone: "draft" },
-};
-
-export const DOCUMENT_TYPES: { type: DocumentType; label: string; required: boolean; help: string }[] = [
-  { type: "owner_identification", label: "Owner Identification", required: true, help: "Driver's licence, passport or national ID — front and back." },
-  { type: "proof_of_ownership", label: "Proof of Ownership", required: true, help: "Sales invoice, deed of sale or previous registration." },
-  { type: "import_purchase", label: "Import / Purchase Documents", required: true, help: "Customs entry or dealer purchase documents." },
-  { type: "roadworthiness_certificate", label: "Roadworthiness Certificate", required: false, help: "Issued automatically when the inspection passes." },
-  { type: "insurance_certificate", label: "Insurance Certificate", required: false, help: "Third-party certificate — attached at insurance verification." },
-  { type: "other_supporting", label: "Other Supporting Documents", required: false, help: "Letters of authority, company registration, etc." },
-];
-
-export const REQUIRED_DOCUMENTS: DocumentType[] = DOCUMENT_TYPES.filter((d) => d.required).map((d) => d.type);
 
 export const IDENTIFICATION_TYPES: { value: IdentificationType; label: string }[] = [
   { value: "drivers_licence", label: "Driver's Licence" },
@@ -190,43 +89,6 @@ export const GENDERS: { value: Gender; label: string }[] = [
   { value: "unspecified", label: "Prefer not to say" },
 ];
 
-export const INTENDED_USES: { value: IntendedUse; label: string }[] = [
-  { value: "private", label: "Private" },
-  { value: "commercial", label: "Commercial" },
-  { value: "government", label: "Government" },
-  { value: "other", label: "Other" },
-];
-
-export const FUEL_TYPES: { value: FuelType; label: string }[] = [
-  { value: "petrol", label: "Petrol" },
-  { value: "diesel", label: "Diesel" },
-  { value: "electric", label: "Electric" },
-  { value: "hybrid", label: "Hybrid" },
-];
-
-export const IMPORT_STATUSES: { value: ImportStatus; label: string }[] = [
-  { value: "new_import", label: "New import" },
-  { value: "used_import", label: "Used import" },
-  { value: "locally_assembled", label: "Locally assembled" },
-  { value: "local_resale", label: "Local resale" },
-];
-
-export const BODY_TYPES = ["Standard", "Off-road / Trail", "Scooter", "Underbone", "Cruiser", "Sport", "Tricycle (Sidecar)"];
-
-export const MAKES: Record<string, string[]> = {
-  Honda: ["XR150L", "CB125F", "Wave 110", "CRF250L", "CG125"],
-  Yamaha: ["YBR125", "XTZ125", "Crypton", "AG200", "FZ150"],
-  Suzuki: ["GN125", "DR200", "TF125", "AX100"],
-  Kawasaki: ["KLX150", "KLR650", "Barako 175"],
-  Bajaj: ["Boxer 150", "Pulsar 180", "Discover 125"],
-  TVS: ["Apache 160", "HLX 125", "Star City"],
-  Haojue: ["DK150", "HJ125"],
-};
-
-export const MOTORCYCLE_COLORS = ["Red", "Black", "Blue", "White", "Silver", "Green", "Yellow", "Orange", "Grey"];
-
-export const COUNTRIES_OF_MANUFACTURE = ["Japan", "Thailand", "India", "China", "Indonesia", "Malaysia", "Philippines", "Vietnam", "Other"];
-
 export const INSURANCE_PROVIDERS = [
   "Motor Vehicles Insurance Limited (MVIL)",
   "Capital Insurance Group",
@@ -235,70 +97,34 @@ export const INSURANCE_PROVIDERS = [
   "Hollard Insurance PNG",
 ];
 
-export const PHOTO_SLOTS: { slot: PhotoSlot; label: string }[] = [
+export const PHOTO_SLOTS: { slot: PhotoSlot; label: string; engineOnly?: boolean }[] = [
   { slot: "front", label: "Front" },
   { slot: "rear", label: "Rear" },
   { slot: "left", label: "Left side" },
   { slot: "right", label: "Right side" },
-  { slot: "engine_number", label: "Engine number" },
+  { slot: "interior", label: "Interior" },
+  { slot: "vin_plate", label: "VIN / compliance plate" },
+  { slot: "engine_number", label: "Engine number", engineOnly: true },
   { slot: "chassis_number", label: "Chassis number" },
-];
-
-export const INSPECTION_CHECKLIST: ChecklistCategoryDef[] = [
-  { key: "identification", label: "Identification", items: [
-    { key: "engine_match", label: "Engine Number Matches" },
-    { key: "chassis_match", label: "Chassis Number Matches" },
-  ] },
-  { key: "tires", label: "Tires", items: [
-    { key: "front_tire", label: "Front Tire" },
-    { key: "rear_tire", label: "Rear Tire" },
-  ] },
-  { key: "brakes", label: "Brakes", items: [
-    { key: "front_brake", label: "Front Brake" },
-    { key: "rear_brake", label: "Rear Brake" },
-  ] },
-  { key: "lights", label: "Lights", items: [
-    { key: "headlight", label: "Headlight" },
-    { key: "brake_light", label: "Brake Light" },
-    { key: "left_indicator", label: "Left Indicator" },
-    { key: "right_indicator", label: "Right Indicator" },
-  ] },
-  { key: "electrical", label: "Electrical", items: [
-    { key: "horn", label: "Horn" },
-    { key: "battery", label: "Battery" },
-  ] },
-  { key: "body", label: "Body & Safety", items: [
-    { key: "frame", label: "Frame" },
-    { key: "suspension", label: "Suspension" },
-    { key: "mirrors", label: "Mirrors" },
-    { key: "seat", label: "Seat" },
-    { key: "exhaust", label: "Exhaust" },
-  ] },
-];
-
-export const CHECKLIST_KEYS = INSPECTION_CHECKLIST.flatMap((c) => c.items.map((i) => i.key));
-
-export const FAILURE_REASONS = [
-  "Brakes not effective",
-  "Tire tread below minimum",
-  "Lights / indicators not working",
-  "Engine or chassis number mismatch",
-  "Frame or suspension damage",
-  "Excessive exhaust emissions / noise",
-  "Other — see notes",
 ];
 
 export const DECLINE_REASONS = ["Insufficient funds", "Card expired", "Do not honour", "Incorrect PIN"];
 
+/** New-registration wizard. Steps 1–5 capture data; 6–10 follow the workflow status. */
 export const WIZARD_STEPS = [
-  { n: 1, key: "owner", label: "Owner" },
-  { n: 2, key: "motorcycle", label: "Motorcycle" },
-  { n: 3, key: "documents", label: "Documents" },
-  { n: 4, key: "inspection", label: "Inspection" },
-  { n: 5, key: "insurance", label: "Insurance" },
-  { n: 6, key: "assessment", label: "Assessment" },
-  { n: 7, key: "payment", label: "Payment" },
-  { n: 8, key: "approval", label: "Approval" },
+  { n: 1, key: "transaction", label: "Transaction" },
+  { n: 2, key: "owner", label: "Owner" },
+  { n: 3, key: "classification", label: "Classification" },
+  { n: 4, key: "vehicle", label: "Vehicle Details" },
+  { n: 5, key: "documents", label: "Documents" },
+  { n: 6, key: "inspection", label: "Inspection" },
+  { n: 7, key: "assessment", label: "Fee Assessment" },
+  { n: 8, key: "review", label: "Review" },
+  { n: 9, key: "payment", label: "Payment" },
+  { n: 10, key: "approval", label: "Approval" },
 ] as const;
+
+/** Last step that captures data (and is editable while the application is a draft). */
+export const LAST_CAPTURE_STEP = 5;
 
 export const PAGE_SIZES = [25, 50, 100];
